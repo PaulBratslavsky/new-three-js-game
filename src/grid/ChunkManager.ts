@@ -1,6 +1,5 @@
 import * as THREE from "three";
 import { Chunk, CHUNK_SIZE } from "./Chunk";
-import { onEvent } from "../core/EventBus";
 
 export class ChunkManager {
   private readonly scene: THREE.Scene;
@@ -34,14 +33,7 @@ export class ChunkManager {
       visible: false,  // Invisible! Only for raycasting      // ← NEW
     });                                                        // ← NEW
 
-    this.setupEventListeners();
     this.updateChunks(0, 0);
-  }
-
-  private setupEventListeners(): void {
-    onEvent<{ x: number; z: number }>("camera:moved", ({ x, z }) => {
-      this.updateChunks(x, z);
-    });
   }
 
   private worldToChunk(worldX: number, worldZ: number): { chunkX: number; chunkZ: number } {
@@ -55,7 +47,7 @@ export class ChunkManager {
     return `${chunkX},${chunkZ}`;
   }
 
-  private updateChunks(cameraX: number, cameraZ: number): void {
+  updateChunks(cameraX: number, cameraZ: number): void {
     const { chunkX: centerX, chunkZ: centerZ } = this.worldToChunk(cameraX, cameraZ);
     const chunksToKeep = new Set<string>();
 

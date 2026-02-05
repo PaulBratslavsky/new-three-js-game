@@ -1,13 +1,35 @@
 import "./style.css";
 import * as THREE from "three";
-import { InputManager } from "./core/InputManager";
-import { CameraController } from "./systems/CameraController";
+import { World } from "./ecs/World";
+import {
+  POSITION,
+  CAMERA_STATE,
+  INPUT_STATE,
+  MOUSE_STATE,
+  GAME_STATE,
+  HIGHLIGHT_TAG,
+  CAMERA_ENTITY,
+  GAME_STATE_ENTITY,
+  HIGHLIGHT_ENTITY,
+  type Position,
+  type CameraState,
+  type InputState,
+  type MouseState,
+  type GameState,
+  type HighlightTag,
+} from "./ecs/components";
 import { ChunkManager } from "./grid/ChunkManager";
-import { SelectionSystem } from "./systems/SelectionSystem";
-import { PlacementSystem } from "./structures/PlacementSystem";
 import { CoordinateDisplay } from "./ui/CoordinateDisplay";
 import { BlockSelector } from "./ui/BlockSelector";
 import { emitEvent } from "./core/EventBus";
+
+import { createInputSystem } from "./systems/InputSystem";
+import { createCameraMovementSystem } from "./systems/CameraMovementSystem";
+import { createChunkLoadingSystem } from "./systems/ChunkLoadingSystem";
+import { createSelectionSystem } from "./systems/SelectionSystem";
+import { createPlacementSystem } from "./systems/PlacementSystem";
+import { createRenderSyncSystem } from "./systems/RenderSyncSystem";
+import { createUISystem } from "./systems/UISystem";
 
 // --- SCENE SETUP ---
 const scene = new THREE.Scene();
@@ -32,26 +54,92 @@ scene.add(light);
 const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
 scene.add(ambientLight);
 
+// --- ECS WORLD ---
+const world = new World();
+
+// Entity 0: Camera
+const cameraEntity = world.createEntity(); // ID 0
+world.addComponent<Position>(cameraEntity, POSITION, { x: 5, y: 10, z: 5 });
+world.addComponent<CameraState>(cameraEntity, CAMERA_STATE, {
+  angle: 0,
+  moveSpeed: 10,
+  rotateSpeed: 2,
+  snapAngle: Math.PI / 2,
+  snapThreshold: 0.05,
+  lastEmittedX: 5,
+  lastEmittedZ: 5,
+});
+world.setObject3D(cameraEntity, camera);
+
+// Entity 1: Game State
+const gameStateEntity = world.createEntity(); // ID 1
+world.addComponent<InputState>(gameStateEntity, INPUT_STATE, {
+  keysPressed: new Set<string>(),
+});
+world.addComponent<MouseState>(gameStateEntity, MOUSE_STATE, {
+  ndcX: 0,
+  ndcY: 0,
+  leftDown: false,
+  rightDown: false,
+  leftClicked: false,
+  rightClicked: false,
+});
+world.addComponent<GameState>(gameStateEntity, GAME_STATE, {
+  selectedBlockType: "stone",
+  buildLevel: 0,
+  placedBlockKeys: new Map(),
+});
+
+// Entity 2: Highlight
+const highlightEntity = world.createEntity(); // ID 2
+world.addComponent<Position>(highlightEntity, POSITION, { x: 0, y: 0, z: 0 });
+world.addComponent<HighlightTag>(highlightEntity, HIGHLIGHT_TAG, {});
+
+const highlightGeometry = new THREE.BoxGeometry(1.05, 1.05, 1.05);
+const highlightMaterial = new THREE.MeshBasicMaterial({
+  color: 0xffff00,
+  transparent: true,
+  opacity: 0.3,
+  depthTest: false,
+});
+const highlightMesh = new THREE.Mesh(highlightGeometry, highlightMaterial);
+highlightMesh.visible = false;
+scene.add(highlightMesh);
+world.setObject3D(highlightEntity, highlightMesh);
+
+// Verify well-known entity IDs match expectations
+if (cameraEntity !== CAMERA_ENTITY) throw new Error("Camera entity ID mismatch");
+if (gameStateEntity !== GAME_STATE_ENTITY) throw new Error("GameState entity ID mismatch");
+if (highlightEntity !== HIGHLIGHT_ENTITY) throw new Error("Highlight entity ID mismatch");
+
+// --- INFRASTRUCTURE ---
+const chunkManager = new ChunkManager(scene, 2);
+
 // --- SYSTEMS ---
-const input = new InputManager();
-const cameraController = new CameraController(camera, input);
-new ChunkManager(scene, 2); // NOSONAR - self-initializing UI component   
-const placementSystem = new PlacementSystem(scene);const selectionSystem = new SelectionSystem(camera, scene);
+const systems = [
+  createInputSystem(),
+  createCameraMovementSystem(),
+  createChunkLoadingSystem(chunkManager),
+  createSelectionSystem(scene),
+  createPlacementSystem(scene),
+  createRenderSyncSystem(),
+  createUISystem(),
+];
 
 // --- UI ---
-new CoordinateDisplay(); // NOSONAR - self-initializing UI component                                 
-new BlockSelector(); // NOSONAR - self-initializing UI component              
+new CoordinateDisplay(); // NOSONAR - self-initializing UI component
+new BlockSelector(); // NOSONAR - self-initializing UI component
 
 // --- GAME LOOP ---
 const clock = new THREE.Clock();
 
 function animate() {
   requestAnimationFrame(animate);
-  const deltaTime = clock.getDelta();
+  const dt = clock.getDelta();
 
-  cameraController.update(deltaTime);
-  selectionSystem.update();
-  placementSystem.update(); 
+  for (const system of systems) {
+    system(world, dt);
+  }
 
   renderer.render(scene, camera);
 }
@@ -65,7 +153,6 @@ globalThis.addEventListener("resize", () => {
   camera.updateProjectionMatrix();
   renderer.setSize(width, height);
 
-  // Emit event so other systems can respond
   emitEvent("window:resized", { width, height });
 });
 

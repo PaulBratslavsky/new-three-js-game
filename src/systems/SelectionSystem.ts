@@ -1,134 +1,80 @@
 import * as THREE from "three";
-import { emitEvent } from "../core/EventBus";
+import { World } from "../ecs/World";
+import {
+  MOUSE_STATE,
+  HOVER_TARGET,
+  POSITION,
+  CAMERA_ENTITY,
+  GAME_STATE_ENTITY,
+  HIGHLIGHT_ENTITY,
+  type MouseState,
+  type HoverTarget,
+  type Position,
+} from "../ecs/components";
 
-/**
- * SelectionSystem - Raycasts from camera through mouse to find blocks
- *
- * Emits "block:hovered" when mouse hovers over a block
- * Emits "block:unhovered" when mouse leaves a block
- */
-export class SelectionSystem {
-  private readonly camera: THREE.Camera;
-  private readonly scene: THREE.Scene;
-  private readonly raycaster: THREE.Raycaster;
-  private readonly mouse: THREE.Vector2;
+export function createSelectionSystem(
+  scene: THREE.Scene
+): (world: World, dt: number) => void {
+  const raycaster = new THREE.Raycaster();
+  const mouseVec = new THREE.Vector2();
 
-  // Currently hovered block position (null if none)
-  private hoveredPosition: { x: number; y: number; z: number } | null = null;
+  return (world: World, _dt: number) => {
+    const mouse = world.getComponent<MouseState>(GAME_STATE_ENTITY, MOUSE_STATE);
+    if (!mouse) return;
 
-  // Visual highlight for selected block
-  private readonly highlightMesh: THREE.Mesh;
+    const cameraObj = world.getObject3D(CAMERA_ENTITY) as THREE.PerspectiveCamera | undefined;
+    if (!cameraObj) return;
 
-  constructor(camera: THREE.Camera, scene: THREE.Scene) {
-    this.camera = camera;
-    this.scene = scene;
-    this.raycaster = new THREE.Raycaster();
-    this.mouse = new THREE.Vector2();
+    mouseVec.set(mouse.ndcX, mouse.ndcY);
+    raycaster.setFromCamera(mouseVec, cameraObj);
 
-    // Create highlight cube (slightly larger than blocks)
-    const highlightGeometry = new THREE.BoxGeometry(1.05, 1.05, 1.05);
-    const highlightMaterial = new THREE.MeshBasicMaterial({
-      color: 0xffff00,
-      transparent: true,
-      opacity: 0.3,
-      depthTest: false,
-    });
-    this.highlightMesh = new THREE.Mesh(highlightGeometry, highlightMaterial);
-    this.highlightMesh.visible = false;
-    this.scene.add(this.highlightMesh);
-
-    this.setupEventListeners();
-  }
-
-  private setupEventListeners(): void {
-    // Track mouse movement
-    globalThis.addEventListener("mousemove", (event) => {
-      this.updateMousePosition(event);
-    });
-  }
-
-  private updateMousePosition(event: MouseEvent): void {
-    // Convert to normalized device coordinates (-1 to 1)
-    this.mouse.x = (event.clientX / globalThis.innerWidth) * 2 - 1;
-    this.mouse.y = -(event.clientY / globalThis.innerHeight) * 2 + 1;
-  }
-
-  /**
-   * Call this every frame to update selection
-   */
-  update(): void {
-    this.raycaster.setFromCamera(this.mouse, this.camera);
-
-    const intersects = this.raycaster.intersectObjects(
-      this.scene.children,
-      false
-    );
-
+    const intersects = raycaster.intersectObjects(scene.children, false);
     const validHits = intersects.filter(
       (hit) =>
         hit.object.userData.isHitTarget === true ||
         hit.object.userData.isPlacedBlock === true
     );
 
+    const highlightObj = world.getObject3D(HIGHLIGHT_ENTITY) as THREE.Mesh | undefined;
+
     if (validHits.length > 0) {
       const hit = validHits[0];
       const gridPos = hit.object.userData.gridPosition;
-      const faceNormal = hit.face?.normal;
-      const isGround = hit.object.userData.isHitTarget === true; // ← ADD THIS LINE
+      const isGround = hit.object.userData.isHitTarget === true;
 
       if (gridPos) {
-        this.onBlockHovered(gridPos, hit.point, faceNormal, isGround); // ← ADD isGround
+        // Add or update HoverTarget on game state entity
+        const hover: HoverTarget = {
+          x: gridPos.x,
+          y: gridPos.y,
+          z: gridPos.z,
+          isGround,
+        };
+        world.addComponent(GAME_STATE_ENTITY, HOVER_TARGET, hover);
+
+        // Position highlight mesh
+        if (highlightObj) {
+          highlightObj.position.set(gridPos.x, gridPos.y + 0.5, gridPos.z);
+          highlightObj.visible = true;
+        }
+
+        // Update highlight entity Position component
+        const hlPos = world.getComponent<Position>(HIGHLIGHT_ENTITY, POSITION);
+        if (hlPos) {
+          hlPos.x = gridPos.x;
+          hlPos.y = gridPos.y;
+          hlPos.z = gridPos.z;
+        }
       }
     } else {
-      this.onBlockUnhovered();
+      // Remove HoverTarget when nothing is hovered
+      if (world.hasComponent(GAME_STATE_ENTITY, HOVER_TARGET)) {
+        world.removeComponent(GAME_STATE_ENTITY, HOVER_TARGET);
+      }
+
+      if (highlightObj) {
+        highlightObj.visible = false;
+      }
     }
-  }
-
-  private onBlockHovered(
-    gridPos: { x: number; y: number; z: number },
-    point: THREE.Vector3,
-    faceNormal?: THREE.Vector3,
-    isGround: boolean = false
-  ): void {
-    // Only emit if this is a different block than before
-    const posKey = `${gridPos.x},${gridPos.y},${gridPos.z}`;
-    const prevKey = this.hoveredPosition
-      ? `${this.hoveredPosition.x},${this.hoveredPosition.y},${this.hoveredPosition.z}`
-      : null;
-
-    if (posKey !== prevKey) {
-      this.hoveredPosition = gridPos;
-
-      // Position highlight at block location
-      this.highlightMesh.position.set(gridPos.x, gridPos.y + 0.5, gridPos.z);
-      this.highlightMesh.visible = true;
-
-      // Emit event with block info
-
-      emitEvent("block:hovered", {
-        x: gridPos.x,
-        y: gridPos.y,
-        z: gridPos.z,
-        point: point.clone(),
-        faceNormal: faceNormal?.clone(),
-        isGround, // ← ADD THIS
-      });
-    }
-  }
-
-  private onBlockUnhovered(): void {
-    if (this.hoveredPosition !== null) {
-      this.hoveredPosition = null;
-      this.highlightMesh.visible = false;
-
-      emitEvent("block:unhovered", {});
-    }
-  }
-
-  /**
-   * Get the currently hovered block position, or null
-   */
-  getHoveredPosition(): { x: number; y: number; z: number } | null {
-    return this.hoveredPosition;
-  }
+  };
 }
