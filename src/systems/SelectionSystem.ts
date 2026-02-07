@@ -52,7 +52,7 @@ export function createSelectionSystem(
         };
         world.addComponent(GAME_STATE_ENTITY, HOVER_TARGET, hover);
 
-        // Position highlight mesh
+        // Position highlight mesh at integer position
         if (highlightObj) {
           highlightObj.position.set(gridPos.x, gridPos.y + 0.5, gridPos.z);
           highlightObj.visible = true;

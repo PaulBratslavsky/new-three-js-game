@@ -46,7 +46,7 @@ export class Chunk {
         const worldX = startX + x;
         const worldZ = startZ + z;
 
-        // Visual: the cyan edge lines
+        // Visual: cyan edge lines centered at integer position
         const visual = new THREE.LineSegments(
           this.edgeGeometry,
           this.edgeMaterial
@@ -61,7 +61,7 @@ export class Chunk {
           this.hitMaterial
         );
         hitTarget.position.set(worldX, 0, worldZ);
-        hitTarget.userData.isHitTarget = true;  // Mark for identification
+        hitTarget.userData.isHitTarget = true;
         hitTarget.userData.gridPosition = { x: worldX, y: 0, z: worldZ };
         this.scene.add(hitTarget);
         this.blocks.push(hitTarget);

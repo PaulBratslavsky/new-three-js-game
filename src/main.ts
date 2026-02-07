@@ -21,6 +21,7 @@ import {
 import { ChunkManager } from "./grid/ChunkManager";
 import { CoordinateDisplay } from "./ui/CoordinateDisplay";
 import { BlockSelector } from "./ui/BlockSelector";
+import { DebugToggle } from "./ui/DebugToggle";
 import { emitEvent } from "./core/EventBus";
 
 import { createInputSystem } from "./systems/InputSystem";
@@ -28,8 +29,15 @@ import { createCameraMovementSystem } from "./systems/CameraMovementSystem";
 import { createChunkLoadingSystem } from "./systems/ChunkLoadingSystem";
 import { createSelectionSystem } from "./systems/SelectionSystem";
 import { createPlacementSystem } from "./systems/PlacementSystem";
+import { createNavObstacleSystem } from "./systems/NavObstacleSystem";
+import { createSpawnerSystem } from "./systems/SpawnerSystem";
+import { createNPCMovementSystem } from "./systems/NPCMovementSystem";
+import { createPathfindingSystem } from "./systems/PathfindingSystem";
+import { createCollisionSystem } from "./systems/CollisionSystem";
+import { createCollisionResponseSystem } from "./systems/CollisionResponseSystem";
 import { createRenderSyncSystem } from "./systems/RenderSyncSystem";
 import { createUISystem } from "./systems/UISystem";
+import { createDebugGridSystem } from "./systems/DebugGridSystem";
 
 // --- SCENE SETUP ---
 const scene = new THREE.Scene();
@@ -122,13 +130,21 @@ const systems = [
   createChunkLoadingSystem(chunkManager),
   createSelectionSystem(scene),
   createPlacementSystem(scene),
+  createNavObstacleSystem(),        // Syncs NavObstacle components with pathfinder
+  createSpawnerSystem(scene),
+  createNPCMovementSystem(),      // Picks targets, requests paths
+  createPathfindingSystem(),       // Calculates and follows paths
+  createCollisionSystem(),
+  createCollisionResponseSystem(),
   createRenderSyncSystem(),
   createUISystem(),
+  createDebugGridSystem(scene),
 ];
 
 // --- UI ---
 new CoordinateDisplay(); // NOSONAR - self-initializing UI component
 new BlockSelector(); // NOSONAR - self-initializing UI component
+new DebugToggle(); // NOSONAR - debug grid toggle
 
 // --- GAME LOOP ---
 const clock = new THREE.Clock();

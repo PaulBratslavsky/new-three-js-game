@@ -6,16 +6,28 @@ import {
   GAME_STATE,
   POSITION,
   BLOCK_DATA,
+  SPAWNER_DATA,
+  NAV_OBSTACLE,
   GAME_STATE_ENTITY,
   type MouseState,
   type HoverTarget,
   type GameState,
   type Position,
   type BlockData,
+  type SpawnerData,
+  type NavObstacle,
 } from "../ecs/components";
 import { BLOCK_GEOMETRY, BLOCK_MATERIALS } from "../structures/BlockTypes";
 import { emitEvent, onEvent } from "../core/EventBus";
 
+/**
+ * PlacementSystem - Creates block entities with appropriate components.
+ *
+ * ECS Pattern:
+ * - ALL blocks get: Position, BlockData, NavObstacle
+ * - Spawner capability: add SpawnerData component
+ * - Components define behavior, not string types
+ */
 export function createPlacementSystem(
   scene: THREE.Scene
 ): (world: World, dt: number) => void {
@@ -68,17 +80,33 @@ function placeBlock(world: World, scene: THREE.Scene, gs: GameState): void {
   if (!material) return;
 
   const mesh = new THREE.Mesh(BLOCK_GEOMETRY, material);
+  // Position at integer (cell center in this coordinate system)
   mesh.position.set(newX, newY + 0.5, newZ);
   mesh.userData.isPlacedBlock = true;
   mesh.userData.blockType = gs.selectedBlockType;
   mesh.userData.gridPosition = { x: newX, y: newY, z: newZ };
   scene.add(mesh);
 
-  // Create block entity
+  // === CREATE BLOCK ENTITY ===
   const blockEntity = world.createEntity();
+
+  // Core components - ALL blocks have these
   world.addComponent<Position>(blockEntity, POSITION, { x: newX, y: newY, z: newZ });
   world.addComponent<BlockData>(blockEntity, BLOCK_DATA, { blockType: gs.selectedBlockType });
+  world.addComponent<NavObstacle>(blockEntity, NAV_OBSTACLE, {}); // Blocks pathfinding
   world.setObject3D(blockEntity, mesh);
+
+  // === OPTIONAL COMPONENTS based on block type ===
+  // SpawnerData component makes this entity a spawner
+  if (gs.selectedBlockType === "spawner") {
+    world.addComponent<SpawnerData>(blockEntity, SPAWNER_DATA, {
+      radius: 5,
+      maxNPCs: 3,
+      spawnedNPCIds: new Set(),
+      spawnInterval: 2,
+      timeSinceLastSpawn: 0,
+    });
+  }
 
   gs.placedBlockKeys.set(key, blockEntity);
 
@@ -99,9 +127,22 @@ function removeBlock(world: World, scene: THREE.Scene, gs: GameState): void {
 
   if (blockEntity === undefined) return;
 
+  // Check if entity HAS SpawnerData component (ECS way, not checking string type)
+  const spawnerData = world.getComponent<SpawnerData>(blockEntity, SPAWNER_DATA);
+  if (spawnerData) {
+    // Clean up spawned NPCs
+    for (const npcId of spawnerData.spawnedNPCIds) {
+      const npcMesh = world.getObject3D(npcId);
+      if (npcMesh) scene.remove(npcMesh);
+      world.destroyEntity(npcId);
+    }
+    spawnerData.spawnedNPCIds.clear();
+  }
+
   const mesh = world.getObject3D(blockEntity);
   if (mesh) scene.remove(mesh);
 
+  // Destroying entity removes all components - NavObstacleSystem will handle pathfinder
   world.destroyEntity(blockEntity);
   gs.placedBlockKeys.delete(key);
 
