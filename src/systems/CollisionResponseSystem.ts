@@ -5,11 +5,13 @@ import {
   MOVEMENT_STATE,
   WANDER_BEHAVIOR,
   PATH_FOLLOWER,
+  SEEK_BEHAVIOR,
   type CollisionState,
   type Position,
   type MovementState,
   type WanderBehavior,
   type PathFollower,
+  type SeekBehavior,
 } from "../ecs/components";
 
 /**
@@ -35,10 +37,16 @@ export function createCollisionResponseSystem(): (world: World, dt: number) => v
 
       // Check what we're colliding with
       const blockContact = state.contacts.find(c => c.layer === "block");
+      const playerContact = state.contacts.find(c => c.layer === "player");
       const npcContact = state.contacts.find(c => c.layer === "npc");
 
+      // Check if this NPC is seeking or in seek-and-destroy mode
+      const seek = world.getComponent<SeekBehavior>(entityId, SEEK_BEHAVIOR);
+      const isSeeking = seek?.state === "seeking" || seek?.state === "seek-and-destroy";
+
+      // Hard collision with block - always revert
       if (blockContact) {
-        // Hard collision with block - revert position
+        // Revert position
         pos.x = movement.prevX;
         pos.z = movement.prevZ;
 
@@ -61,6 +69,43 @@ export function createCollisionResponseSystem(): (world: World, dt: number) => v
         const wander = world.getComponent<WanderBehavior>(entityId, WANDER_BEHAVIOR);
         if (wander) {
           wander.waitTime = 0.2;
+        }
+      } else if (playerContact) {
+        // Collision with player
+        if (isSeeking) {
+          // Seeking NPC reached player - just stop, don't clear path
+          // The NPC has "caught" the player
+          pos.x = movement.prevX;
+          pos.z = movement.prevZ;
+
+          const mesh = world.getObject3D(entityId);
+          if (mesh) {
+            mesh.position.x = pos.x;
+            mesh.position.z = pos.z;
+          }
+          // Don't clear path - let SeekSystem handle pursuit logic
+        } else {
+          // Non-seeking entity hit player - revert and clear path
+          pos.x = movement.prevX;
+          pos.z = movement.prevZ;
+
+          const mesh = world.getObject3D(entityId);
+          if (mesh) {
+            mesh.position.x = pos.x;
+            mesh.position.z = pos.z;
+          }
+
+          const pf = world.getComponent<PathFollower>(entityId, PATH_FOLLOWER);
+          if (pf) {
+            pf.path = [];
+            pf.pathIndex = -1;
+            pf.needsPath = false;
+          }
+
+          const wander = world.getComponent<WanderBehavior>(entityId, WANDER_BEHAVIOR);
+          if (wander) {
+            wander.waitTime = 0.5;
+          }
         }
       } else if (npcContact) {
         // Soft collision with NPC - only intervene if deeply penetrating

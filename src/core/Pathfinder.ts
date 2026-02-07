@@ -68,8 +68,25 @@ export class Pathfinder {
   }
 
   /**
+   * Check if a cell is blocked, including dynamic obstacles.
+   * Used internally by findPath.
+   */
+  private isBlockedWithDynamic(
+    cellX: number,
+    cellZ: number,
+    dynamicObstacles?: Set<string>
+  ): boolean {
+    const key = `${cellX},${cellZ}`;
+    if (this.blocked.has(key)) return true;
+    if (dynamicObstacles?.has(key)) return true;
+    return false;
+  }
+
+  /**
    * Find path from start cell to goal cell.
    * Returns array of cell coordinates, or null if no path.
+   *
+   * @param dynamicObstacles - Optional set of "x,z" keys for temporary obstacles (e.g., player position for NPCs)
    *
    * Usage (same for player click or NPC AI):
    *   const startCell = Pathfinder.worldToCell(entity.x, entity.z);
@@ -81,7 +98,8 @@ export class Pathfinder {
     startZ: number,
     goalX: number,
     goalZ: number,
-    maxIterations: number = 1000
+    maxIterations: number = 1000,
+    dynamicObstacles?: Set<string>
   ): PathPoint[] | null {
     // Ensure integer cell coordinates
     const sx = Math.floor(startX);
@@ -90,12 +108,12 @@ export class Pathfinder {
     const gz = Math.floor(goalZ);
 
     // Can't path to blocked cell - return null, let caller handle it
-    if (this.isBlocked(gx, gz)) {
+    if (this.isBlockedWithDynamic(gx, gz, dynamicObstacles)) {
       return null;
     }
 
     // Can't path from blocked cell
-    if (this.isBlocked(sx, sz)) {
+    if (this.isBlockedWithDynamic(sx, sz, dynamicObstacles)) {
       return null;
     }
 
@@ -152,9 +170,9 @@ export class Pathfinder {
       for (const neighbor of neighbors) {
         const key = `${neighbor.x},${neighbor.z}`;
 
-        // Skip if in closed set or blocked
+        // Skip if in closed set or blocked (including dynamic obstacles)
         if (closedSet.has(key)) continue;
-        if (this.isBlocked(neighbor.x, neighbor.z)) continue;
+        if (this.isBlockedWithDynamic(neighbor.x, neighbor.z, dynamicObstacles)) continue;
 
         const g = current.g + 1;
         const h = this.heuristic(neighbor.x, neighbor.z, gx, gz);

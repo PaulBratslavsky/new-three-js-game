@@ -8,11 +8,6 @@ import {
   MOUSE_STATE,
   GAME_STATE,
   HIGHLIGHT_TAG,
-  PLAYER_DATA,
-  PATH_FOLLOWER,
-  MOVEMENT_STATE,
-  COLLIDER,
-  COLLISION_STATE,
   CAMERA_ENTITY,
   GAME_STATE_ENTITY,
   HIGHLIGHT_ENTITY,
@@ -23,12 +18,9 @@ import {
   type MouseState,
   type GameState,
   type HighlightTag,
-  type PlayerData,
-  type PathFollower,
-  type MovementState,
-  type Collider,
-  type CollisionState,
 } from "./ecs/components";
+import { createPlayer } from "./entities";
+
 import { ChunkManager } from "./grid/ChunkManager";
 import { CoordinateDisplay } from "./ui/CoordinateDisplay";
 import { BlockSelector } from "./ui/BlockSelector";
@@ -52,6 +44,7 @@ import { createRenderSyncSystem } from "./systems/RenderSyncSystem";
 import { createUISystem } from "./systems/UISystem";
 import { createDebugGridSystem } from "./systems/DebugGridSystem";
 import { createPlayerInputSystem } from "./systems/PlayerInputSystem";
+import { createSeekSystem } from "./systems/SeekSystem";
 
 // --- SCENE SETUP ---
 const scene = new THREE.Scene();
@@ -131,56 +124,7 @@ scene.add(highlightMesh);
 world.setObject3D(highlightEntity, highlightMesh);
 
 // Entity 3: Player
-const playerEntity = world.createEntity(); // ID 3
-const playerStartX = 5;
-const playerStartZ = 5;
-
-world.addComponent<Position>(playerEntity, POSITION, {
-  x: playerStartX,
-  y: 0,
-  z: playerStartZ,
-});
-world.addComponent<PlayerData>(playerEntity, PLAYER_DATA, {
-  facingAngle: 0,
-});
-world.addComponent<PathFollower>(playerEntity, PATH_FOLLOWER, {
-  path: [],
-  pathIndex: -1,
-  targetX: playerStartX,
-  targetZ: playerStartZ,
-  moveSpeed: 4, // Slightly faster than NPCs
-  needsPath: false,
-  pathRetryTime: 0,
-});
-world.addComponent<MovementState>(playerEntity, MOVEMENT_STATE, {
-  prevX: playerStartX,
-  prevZ: playerStartZ,
-});
-world.addComponent<Collider>(playerEntity, COLLIDER, {
-  type: "circle",
-  width: 0,
-  height: 0,
-  depth: 0,
-  radius: 0.3,
-  offsetX: 0,
-  offsetY: 0,
-  offsetZ: 0,
-  layer: "player",
-  collidesWith: new Set(["npc", "block"]),
-});
-world.addComponent<CollisionState>(playerEntity, COLLISION_STATE, {
-  contacts: [],
-  isColliding: false,
-});
-
-// Player mesh (blue cone, similar to NPC but different color)
-const playerGeometry = new THREE.ConeGeometry(0.35, 0.9, 4);
-playerGeometry.rotateX(Math.PI / 2);
-const playerMaterial = new THREE.MeshStandardMaterial({ color: 0x0088ff });
-const playerMesh = new THREE.Mesh(playerGeometry, playerMaterial);
-playerMesh.position.set(playerStartX, 0.45, playerStartZ);
-scene.add(playerMesh);
-world.setObject3D(playerEntity, playerMesh);
+const playerEntity = createPlayer(world, scene, 5, 5);
 
 // Verify well-known entity IDs match expectations
 if (cameraEntity !== CAMERA_ENTITY) throw new Error("Camera entity ID mismatch");
@@ -201,6 +145,7 @@ const systems = [
   createPlacementSystem(scene),
   createNavObstacleSystem(),       // Syncs NavObstacle components with pathfinder
   createSpawnerSystem(scene),
+  createSeekSystem(),              // NPC pursuit behavior (before wander)
   createNPCMovementSystem(),       // NPC AI - picks targets, requests paths
   createPathfindingSystem(),       // Calculates and follows paths (player + NPCs)
   createCollisionSystem(),

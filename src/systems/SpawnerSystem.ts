@@ -2,24 +2,12 @@ import * as THREE from "three";
 import { World } from "../ecs/World";
 import {
   SPAWNER_DATA,
-  NPC_DATA,
   POSITION,
-  COLLIDER,
-  COLLISION_STATE,
-  PATH_FOLLOWER,
-  MOVEMENT_STATE,
-  WANDER_BEHAVIOR,
   type SpawnerData,
-  type NPCData,
   type Position,
-  type Collider,
-  type CollisionState,
-  type PathFollower,
-  type MovementState,
-  type WanderBehavior,
 } from "../ecs/components";
-import { NPC_GEOMETRY, NPC_MATERIAL } from "../structures/BlockTypes";
 import { pathfinder, Pathfinder } from "../core/Pathfinder";
+import { createNPC } from "../entities";
 
 /**
  * Find a walkable cell near the spawner.
@@ -90,72 +78,13 @@ export function createSpawnerSystem(
         // Convert cell to world position (cell center)
         const spawnWorld = Pathfinder.cellToWorld(spawnCell.x, spawnCell.z);
 
-        // Create NPC entity
-        const npcEntity = world.createEntity();
-
-        // Position at cell center
-        world.addComponent<Position>(npcEntity, POSITION, {
-          x: spawnWorld.x,
-          y: pos.y,
-          z: spawnWorld.z,
-        });
-
-        // NPC identity (links to spawner)
-        world.addComponent<NPCData>(npcEntity, NPC_DATA, {
+        // Create NPC entity using factory
+        const npcEntity = createNPC(world, scene, spawnWorld.x, spawnWorld.z, pos.y, {
           spawnerEntityId: spawnerId,
-          facingAngle: 0,
-        });
-
-        // Wander behavior (AI logic - NPCs only)
-        world.addComponent<WanderBehavior>(npcEntity, WANDER_BEHAVIOR, {
           originX: pos.x,
           originZ: pos.z,
-          radius: spawner.radius,
-          waitTime: 0.5, // Wait before first move
-          minWait: 0.5,
-          maxWait: 1.5,
+          wanderRadius: spawner.radius,
         });
-
-        // Movement tracking (for collision revert)
-        world.addComponent<MovementState>(npcEntity, MOVEMENT_STATE, {
-          prevX: spawnWorld.x,
-          prevZ: spawnWorld.z,
-        });
-
-        // PathFollower for grid-based movement
-        world.addComponent<PathFollower>(npcEntity, PATH_FOLLOWER, {
-          path: [],
-          pathIndex: -1,
-          targetX: spawnWorld.x,
-          targetZ: spawnWorld.z,
-          moveSpeed: 3,
-          needsPath: false,
-          pathRetryTime: 0,
-        });
-
-        // Collision (NPC-NPC only)
-        world.addComponent<Collider>(npcEntity, COLLIDER, {
-          type: "circle",
-          width: 0,
-          height: 0,
-          depth: 0,
-          radius: 0.3,
-          offsetX: 0,
-          offsetY: 0,
-          offsetZ: 0,
-          layer: "npc",
-          collidesWith: new Set(["npc"]),
-        });
-        world.addComponent<CollisionState>(npcEntity, COLLISION_STATE, {
-          contacts: [],
-          isColliding: false,
-        });
-
-        // Create mesh at cell center
-        const mesh = new THREE.Mesh(NPC_GEOMETRY, NPC_MATERIAL);
-        mesh.position.set(spawnWorld.x, pos.y + 0.4, spawnWorld.z);
-        scene.add(mesh);
-        world.setObject3D(npcEntity, mesh);
 
         spawner.spawnedNPCIds.add(npcEntity);
       }

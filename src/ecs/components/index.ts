@@ -12,6 +12,7 @@ export * from "./navigation";
 export * from "./movement";
 export * from "./wander";
 export * from "./player";
+export * from "./seek";
 
 // Import constants for ComponentTypeMap
 import {
@@ -72,6 +73,10 @@ import {
   PLAYER_DATA,
   type PlayerData,
 } from "./player";
+import {
+  SEEK_BEHAVIOR,
+  type SeekBehavior,
+} from "./seek";
 
 // Component type map for generic lookups
 export interface ComponentTypeMap {
@@ -92,4 +97,5 @@ export interface ComponentTypeMap {
   [MOVEMENT_STATE]: MovementState;
   [WANDER_BEHAVIOR]: WanderBehavior;
   [PLAYER_DATA]: PlayerData;
+  [SEEK_BEHAVIOR]: SeekBehavior;
 }

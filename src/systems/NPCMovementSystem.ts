@@ -4,23 +4,27 @@ import {
   PATH_FOLLOWER,
   POSITION,
   WANDER_BEHAVIOR,
+  SEEK_BEHAVIOR,
+  PLAYER_ENTITY,
   type NPCData,
   type PathFollower,
   type Position,
   type WanderBehavior,
+  type SeekBehavior,
 } from "../ecs/components";
 import { pathfinder, Pathfinder } from "../core/Pathfinder";
 
 const MAX_TARGET_ATTEMPTS = 20;
 
 /**
- * Pick a random walkable cell within radius.
+ * Pick a random walkable cell within radius, avoiding player's cell.
  * Returns cell coordinates (integers).
  */
 function pickWalkableTargetCell(
   originX: number,
   originZ: number,
-  radius: number
+  radius: number,
+  avoidCell?: { x: number; z: number }
 ): { x: number; z: number } | null {
   const originCell = Pathfinder.worldToCell(originX, originZ);
 
@@ -30,9 +34,13 @@ function pickWalkableTargetCell(
     const cellX = originCell.x + Math.floor(Math.cos(angle) * dist);
     const cellZ = originCell.z + Math.floor(Math.sin(angle) * dist);
 
-    if (!pathfinder.isBlocked(cellX, cellZ)) {
-      return { x: cellX, z: cellZ };
-    }
+    // Check if blocked by terrain
+    if (pathfinder.isBlocked(cellX, cellZ)) continue;
+
+    // Check if this is the cell to avoid (player position)
+    if (avoidCell && cellX === avoidCell.x && cellZ === avoidCell.z) continue;
+
+    return { x: cellX, z: cellZ };
   }
   return null;
 }
@@ -46,6 +54,12 @@ function pickWalkableTargetCell(
  */
 export function createNPCMovementSystem(): (world: World, dt: number) => void {
   return (world: World, dt: number) => {
+    // Get player cell to avoid
+    const playerPos = world.getComponent<Position>(PLAYER_ENTITY, POSITION);
+    const playerCell = playerPos
+      ? Pathfinder.worldToCell(playerPos.x, playerPos.z)
+      : undefined;
+
     // Query entities with wander behavior (not all entities with PathFollower)
     const wanderers = world.query(WANDER_BEHAVIOR, PATH_FOLLOWER, POSITION);
 
@@ -54,6 +68,12 @@ export function createNPCMovementSystem(): (world: World, dt: number) => void {
       const pf = world.getComponent<PathFollower>(entityId, PATH_FOLLOWER);
       const pos = world.getComponent<Position>(entityId, POSITION);
       if (!wander || !pf || !pos) continue;
+
+      // Skip wandering if entity is seeking or in seek-and-destroy mode
+      const seek = world.getComponent<SeekBehavior>(entityId, SEEK_BEHAVIOR);
+      if (seek && (seek.state === "seeking" || seek.state === "seek-and-destroy")) {
+        continue; // SeekSystem handles movement
+      }
 
       // Note: MovementState tracking is handled by PathfindingSystem
 
@@ -69,8 +89,8 @@ export function createNPCMovementSystem(): (world: World, dt: number) => void {
       const notWaiting = pf.pathRetryTime <= 0;
 
       if (noPath && notRequesting && notWaiting) {
-        // Pick new random walkable target within wander radius
-        const targetCell = pickWalkableTargetCell(wander.originX, wander.originZ, wander.radius);
+        // Pick new random walkable target within wander radius (avoiding player)
+        const targetCell = pickWalkableTargetCell(wander.originX, wander.originZ, wander.radius, playerCell);
 
         if (targetCell) {
           const targetWorld = Pathfinder.cellToWorld(targetCell.x, targetCell.z);

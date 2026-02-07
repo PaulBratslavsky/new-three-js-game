@@ -3,9 +3,13 @@ import {
   PATH_FOLLOWER,
   POSITION,
   MOVEMENT_STATE,
+  WANDER_BEHAVIOR,
+  SEEK_BEHAVIOR,
+  PLAYER_ENTITY,
   type PathFollower,
   type Position,
   type MovementState,
+  type SeekBehavior,
 } from "../ecs/components";
 import { pathfinder, Pathfinder } from "../core/Pathfinder";
 
@@ -24,6 +28,14 @@ const PATH_RETRY_COOLDOWN = 0.5;
 export function createPathfindingSystem(): (world: World, dt: number) => void {
   return (world: World, dt: number) => {
     const followers = world.query(PATH_FOLLOWER, POSITION);
+
+    // Get player position for NPC pathfinding (NPCs avoid player)
+    let playerObstacles: Set<string> | undefined;
+    const playerPos = world.getComponent<Position>(PLAYER_ENTITY, POSITION);
+    if (playerPos) {
+      const playerCell = Pathfinder.worldToCell(playerPos.x, playerPos.z);
+      playerObstacles = new Set([`${playerCell.x},${playerCell.z}`]);
+    }
 
     for (const entityId of followers) {
       const pf = world.getComponent<PathFollower>(entityId, PATH_FOLLOWER);
@@ -49,10 +61,18 @@ export function createPathfindingSystem(): (world: World, dt: number) => void {
       if (pf.needsPath && pf.pathRetryTime <= 0) {
         const targetCell = Pathfinder.worldToCell(pf.targetX, pf.targetZ);
 
+        // NPCs avoid player (unless seeking/aggro), player doesn't avoid NPCs
+        const isNPC = world.hasComponent(entityId, WANDER_BEHAVIOR);
+        const seek = world.getComponent<SeekBehavior>(entityId, SEEK_BEHAVIOR);
+        const isChasing = seek?.state === "seeking" || seek?.state === "seek-and-destroy";
+        const dynamicObstacles = (isNPC && !isChasing) ? playerObstacles : undefined;
+
         // Find path (returns cell coordinates)
         const path = pathfinder.findPath(
           currentCell.x, currentCell.z,
-          targetCell.x, targetCell.z
+          targetCell.x, targetCell.z,
+          1000,
+          dynamicObstacles
         );
 
         if (path && path.length > 0) {

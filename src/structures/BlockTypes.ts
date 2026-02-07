@@ -59,3 +59,5 @@ export const NPC_GEOMETRY = (() => {
   return geometry;
 })();
 export const NPC_MATERIAL = new THREE.MeshStandardMaterial({ color: 0x00ff00 });
+export const NPC_MATERIAL_SEEKING = new THREE.MeshStandardMaterial({ color: 0xff0000 });
+export const NPC_MATERIAL_AGGRO = new THREE.MeshStandardMaterial({ color: 0x0066ff });
