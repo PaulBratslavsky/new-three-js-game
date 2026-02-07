@@ -7,12 +7,16 @@ import {
   COLLIDER,
   COLLISION_STATE,
   PATH_FOLLOWER,
+  MOVEMENT_STATE,
+  WANDER_BEHAVIOR,
   type SpawnerData,
   type NPCData,
   type Position,
   type Collider,
   type CollisionState,
   type PathFollower,
+  type MovementState,
+  type WanderBehavior,
 } from "../ecs/components";
 import { NPC_GEOMETRY, NPC_MATERIAL } from "../structures/BlockTypes";
 import { pathfinder, Pathfinder } from "../core/Pathfinder";
@@ -96,21 +100,29 @@ export function createSpawnerSystem(
           z: spawnWorld.z,
         });
 
-        // NPC behavior data
+        // NPC identity (links to spawner)
         world.addComponent<NPCData>(npcEntity, NPC_DATA, {
           spawnerEntityId: spawnerId,
+          facingAngle: 0,
+        });
+
+        // Wander behavior (AI logic - NPCs only)
+        world.addComponent<WanderBehavior>(npcEntity, WANDER_BEHAVIOR, {
           originX: pos.x,
           originZ: pos.z,
           radius: spawner.radius,
-          targetX: spawnWorld.x,
-          targetZ: spawnWorld.z,
-          facingAngle: 0,
           waitTime: 0.5, // Wait before first move
+          minWait: 0.5,
+          maxWait: 1.5,
+        });
+
+        // Movement tracking (for collision revert)
+        world.addComponent<MovementState>(npcEntity, MOVEMENT_STATE, {
           prevX: spawnWorld.x,
           prevZ: spawnWorld.z,
         });
 
-        // PathFollower for movement
+        // PathFollower for grid-based movement
         world.addComponent<PathFollower>(npcEntity, PATH_FOLLOWER, {
           path: [],
           pathIndex: -1,

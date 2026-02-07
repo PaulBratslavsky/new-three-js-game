@@ -18,8 +18,11 @@ export interface HoverTarget {
 
 export interface HighlightTag {}
 
+export type GameMode = "build" | "move";
+
 export interface GameState {
+  mode: GameMode;                        // Current interaction mode
   selectedBlockType: string;
   buildLevel: number;
-  placedBlockKeys: Map<string, number>; // "x,y,z" → entity ID
+  placedBlockKeys: Map<string, number>;  // "x,y,z" → entity ID
 }

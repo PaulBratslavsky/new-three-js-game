@@ -9,6 +9,9 @@ export * from "./npc";
 export * from "./pathfinding";
 export * from "./collision";
 export * from "./navigation";
+export * from "./movement";
+export * from "./wander";
+export * from "./player";
 
 // Import constants for ComponentTypeMap
 import {
@@ -57,6 +60,18 @@ import {
   NAV_OBSTACLE,
   type NavObstacle,
 } from "./navigation";
+import {
+  MOVEMENT_STATE,
+  type MovementState,
+} from "./movement";
+import {
+  WANDER_BEHAVIOR,
+  type WanderBehavior,
+} from "./wander";
+import {
+  PLAYER_DATA,
+  type PlayerData,
+} from "./player";
 
 // Component type map for generic lookups
 export interface ComponentTypeMap {
@@ -74,4 +89,7 @@ export interface ComponentTypeMap {
   [COLLIDER]: Collider;
   [COLLISION_STATE]: CollisionState;
   [NAV_OBSTACLE]: NavObstacle;
+  [MOVEMENT_STATE]: MovementState;
+  [WANDER_BEHAVIOR]: WanderBehavior;
+  [PLAYER_DATA]: PlayerData;
 }

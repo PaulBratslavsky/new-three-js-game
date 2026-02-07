@@ -3,9 +3,11 @@ import {
   NPC_DATA,
   PATH_FOLLOWER,
   POSITION,
+  WANDER_BEHAVIOR,
   type NPCData,
   type PathFollower,
   type Position,
+  type WanderBehavior,
 } from "../ecs/components";
 import { pathfinder, Pathfinder } from "../core/Pathfinder";
 
@@ -36,57 +38,55 @@ function pickWalkableTargetCell(
 }
 
 /**
- * NPCMovementSystem - AI behavior for NPCs
+ * NPCMovementSystem - AI behavior for entities with WanderBehavior
  *
- * Picks random walkable targets within wander radius.
+ * Only processes entities that HAVE WanderBehavior component.
+ * This means players (who don't wander) won't be affected.
  * The actual pathfinding is handled by PathfindingSystem.
  */
 export function createNPCMovementSystem(): (world: World, dt: number) => void {
   return (world: World, dt: number) => {
-    const npcs = world.query(NPC_DATA, PATH_FOLLOWER, POSITION);
+    // Query entities with wander behavior (not all entities with PathFollower)
+    const wanderers = world.query(WANDER_BEHAVIOR, PATH_FOLLOWER, POSITION);
 
-    for (const npcId of npcs) {
-      const npc = world.getComponent<NPCData>(npcId, NPC_DATA);
-      const pf = world.getComponent<PathFollower>(npcId, PATH_FOLLOWER);
-      const pos = world.getComponent<Position>(npcId, POSITION);
-      if (!npc || !pf || !pos) continue;
+    for (const entityId of wanderers) {
+      const wander = world.getComponent<WanderBehavior>(entityId, WANDER_BEHAVIOR);
+      const pf = world.getComponent<PathFollower>(entityId, PATH_FOLLOWER);
+      const pos = world.getComponent<Position>(entityId, POSITION);
+      if (!wander || !pf || !pos) continue;
 
-      // Store previous position
-      npc.prevX = pos.x;
-      npc.prevZ = pos.z;
+      // Note: MovementState tracking is handled by PathfindingSystem
 
-      // Handle wait time
-      if (npc.waitTime > 0) {
-        npc.waitTime -= dt;
+      // Handle wait time (wander-specific behavior)
+      if (wander.waitTime > 0) {
+        wander.waitTime -= dt;
         continue;
       }
 
-      // Check if NPC needs a new target
+      // Check if entity needs a new target
       const noPath = pf.pathIndex === -1 && pf.path.length === 0;
       const notRequesting = !pf.needsPath;
       const notWaiting = pf.pathRetryTime <= 0;
 
       if (noPath && notRequesting && notWaiting) {
-        // Pick new random walkable target
-        const targetCell = pickWalkableTargetCell(npc.originX, npc.originZ, npc.radius);
+        // Pick new random walkable target within wander radius
+        const targetCell = pickWalkableTargetCell(wander.originX, wander.originZ, wander.radius);
 
         if (targetCell) {
           const targetWorld = Pathfinder.cellToWorld(targetCell.x, targetCell.z);
-
-          npc.targetX = targetWorld.x;
-          npc.targetZ = targetWorld.z;
 
           pf.targetX = targetWorld.x;
           pf.targetZ = targetWorld.z;
           pf.needsPath = true;
         } else {
           // No walkable target, wait and try again
-          npc.waitTime = 0.5;
+          wander.waitTime = 0.5;
         }
       }
 
-      // Update facing based on movement
-      if (pf.pathIndex >= 0 && pf.pathIndex < pf.path.length) {
+      // Update facing based on movement (if entity has NPCData for visual)
+      const npc = world.getComponent<NPCData>(entityId, NPC_DATA);
+      if (npc && pf.pathIndex >= 0 && pf.pathIndex < pf.path.length) {
         const waypoint = pf.path[pf.pathIndex];
         const targetWorld = Pathfinder.cellToWorld(waypoint.x, waypoint.z);
         const dx = targetWorld.x - pos.x;

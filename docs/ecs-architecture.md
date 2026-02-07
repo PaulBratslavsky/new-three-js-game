@@ -73,9 +73,16 @@ graph TB
         S3[3. ChunkLoadingSystem]
         S4[4. SelectionSystem]
         S5[5. PlacementSystem]
-        S6[6. RenderSyncSystem]
-        S7[7. UISystem]
-        S1 --> S2 --> S3 --> S4 --> S5 --> S6 --> S7
+        S6[6. NavObstacleSystem]
+        S7[7. SpawnerSystem]
+        S8[8. NPCMovementSystem]
+        S9[9. PathfindingSystem]
+        S10[10. CollisionSystem]
+        S11[11. CollisionResponseSystem]
+        S12[12. RenderSyncSystem]
+        S13[13. UISystem]
+        S14[14. DebugGridSystem]
+        S1 --> S2 --> S3 --> S4 --> S5 --> S6 --> S7 --> S8 --> S9 --> S10 --> S11 --> S12 --> S13 --> S14
     end
 
     subgraph External["Kept from old architecture"]
@@ -209,6 +216,10 @@ Every component is a TypeScript interface (pure data) plus a string constant use
 | `HOVER_TARGET` | `HoverTarget` | `x, y, z, isGround: boolean` | What the mouse cursor is pointing at |
 | `HIGHLIGHT_TAG` | `HighlightTag` | `{}` (empty) | Tag-only marker for the highlight entity |
 | `GAME_STATE` | `GameState` | `selectedBlockType, buildLevel, placedBlockKeys: Map<string, number>` | Global game configuration |
+| `PATH_FOLLOWER` | `PathFollower` | `path, pathIndex, targetX/Z, moveSpeed, needsPath, pathRetryTime` | Grid-based pathfinding (see [Pathfinding System](./pathfinding-system.md)) |
+| `NAV_OBSTACLE` | `NavObstacle` | `{}` (empty) | Marks entity as blocking pathfinding |
+| `COLLIDER` | `Collider` | `type, radius/width/depth, layer, collidesWith` | Collision detection shape |
+| `COLLISION_STATE` | `CollisionState` | `contacts[], isColliding` | Current frame collision results |
 
 ### Name Constants
 
@@ -446,6 +457,20 @@ Queries all block entities and syncs their ECS Position to the Three.js mesh pos
 **Writes:** EventBus events (`block:hovered`, `block:unhovered`)
 
 Bridges ECS state to the EventBus so that legacy UI components (`CoordinateDisplay`, `BlockSelector`) continue to work without knowing about the ECS.
+
+### Additional Systems
+
+The following systems are documented in detail in their respective guides:
+
+| System | File | Purpose | Documentation |
+|--------|------|---------|---------------|
+| NavObstacleSystem | `NavObstacleSystem.ts` | Syncs obstacles with pathfinder | [Pathfinding System](./pathfinding-system.md) |
+| SpawnerSystem | `SpawnerSystem.ts` | Creates NPCs from spawner blocks | [NPC Spawner System](./npc-spawner-system.md) |
+| NPCMovementSystem | `NPCMovementSystem.ts` | AI target selection for NPCs | [NPC Spawner System](./npc-spawner-system.md) |
+| PathfindingSystem | `PathfindingSystem.ts` | A* pathfinding and path following | [Pathfinding System](./pathfinding-system.md) |
+| CollisionSystem | `CollisionSystem.ts` | Collision detection | [Pathfinding System](./pathfinding-system.md) |
+| CollisionResponseSystem | `CollisionResponseSystem.ts` | Collision response handling | [Pathfinding System](./pathfinding-system.md) |
+| DebugGridSystem | `DebugGridSystem.ts` | Visualizes walkable/blocked cells | [Pathfinding System](./pathfinding-system.md) |
 
 ---
 
@@ -760,24 +785,47 @@ src/
 ├── main.ts                              Entry point: scene, entities, systems, game loop
 ├── ecs/
 │   ├── World.ts                         Core ECS class: entities, stores, queries, side table
-│   └── components.ts                    All component interfaces + name constants
+│   ├── components.ts                    Re-exports all components
+│   └── components/                      Component definitions (modular)
+│       ├── camera.ts                    CameraState component
+│       ├── collision.ts                 Collider, CollisionState components
+│       ├── game.ts                      GameState, InputState, MouseState
+│       ├── navigation.ts                PathFollower, NavObstacle components
+│       ├── npc.ts                       NPCData component
+│       ├── position.ts                  Position component
+│       ├── selection.ts                 HoverTarget, HighlightTag components
+│       └── spawner.ts                   SpawnerData component
 ├── systems/
 │   ├── InputSystem.ts                   DOM events → InputState, MouseState
 │   ├── CameraMovementSystem.ts          WASD/QE → camera Position + Three.js transform
 │   ├── ChunkLoadingSystem.ts            Camera Position → ChunkManager.updateChunks()
 │   ├── SelectionSystem.ts               Raycast → HoverTarget + highlight mesh
 │   ├── PlacementSystem.ts               Click + HoverTarget → create/destroy block entities
+│   ├── NavObstacleSystem.ts             Sync NavObstacle entities with pathfinder
+│   ├── SpawnerSystem.ts                 Spawn NPCs from spawner blocks
+│   ├── NPCMovementSystem.ts             AI target selection, path requests
+│   ├── PathfindingSystem.ts             A* pathfinding and path following
+│   ├── CollisionSystem.ts               Collision detection between entities
+│   ├── CollisionResponseSystem.ts       Handle collision responses
 │   ├── RenderSyncSystem.ts              Position + BlockData → mesh.position sync
-│   └── UISystem.ts                      HoverTarget → EventBus for UI components
+│   ├── UISystem.ts                      HoverTarget → EventBus for UI components
+│   └── DebugGridSystem.ts               Visualize walkable/blocked cells
 ├── core/
 │   ├── EventBus.ts                      Pub/sub for UI communication
-│   └── EventTypes.ts                    Event interface definitions
+│   ├── EventTypes.ts                    Event interface definitions
+│   └── Pathfinder.ts                    A* algorithm, blocked cell tracking
 ├── grid/
 │   ├── Chunk.ts                         Single 8x8 terrain chunk
 │   └── ChunkManager.ts                  Chunk loading/unloading around camera
 ├── structures/
 │   └── BlockTypes.ts                    Block type definitions + shared materials
 └── ui/
-    ├── BlockSelector.ts                 Block type selector (keys 1-5)
-    └── CoordinateDisplay.ts             Shows hovered block coordinates
+    ├── BlockSelector.ts                 Block type selector (keys 1-6)
+    ├── CoordinateDisplay.ts             Shows hovered block coordinates
+    └── DebugToggle.ts                   Toggle debug grid visibility
 ```
+
+## Related Documentation
+
+- [Pathfinding System](./pathfinding-system.md) - Grid-based A* pathfinding, coordinate system, obstacle handling
+- [NPC Spawner System](./npc-spawner-system.md) - Spawner blocks, NPC behavior, pathfinding integration

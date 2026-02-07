@@ -12,10 +12,13 @@ A complete guide to implementing spawner blocks that create wandering NPCs. This
 4. [Block Type Registration](#block-type-registration)
 5. [SpawnerSystem](#spawnersystem)
 6. [NPCMovementSystem](#npcmovementsystem)
-7. [PlacementSystem Integration](#placementsystem-integration)
-8. [Data Flow](#data-flow)
-9. [Implementing in Your Codebase](#implementing-in-your-codebase)
-10. [Customization Guide](#customization-guide)
+7. [Pathfinding Integration](#pathfinding-integration)
+8. [PlacementSystem Integration](#placementsystem-integration)
+9. [Data Flow](#data-flow)
+10. [Implementing in Your Codebase](#implementing-in-your-codebase)
+11. [Customization Guide](#customization-guide)
+
+> **Related Documentation:** See [Pathfinding System](./pathfinding-system.md) for details on the A* algorithm, coordinate system, and path following mechanics.
 
 ---
 
@@ -135,7 +138,7 @@ export interface SpawnerData {
 ### NPCData Component
 
 ```typescript
-// src/ecs/components.ts
+// src/ecs/components/npc.ts
 
 export const NPC_DATA = "NPCData";
 
@@ -146,9 +149,10 @@ export interface NPCData {
   radius: number;           // Wander radius (copied from spawner)
   targetX: number;          // Current movement target X
   targetZ: number;          // Current movement target Z
-  moveSpeed: number;        // Units per second (default: 2)
   facingAngle: number;      // Y-axis rotation for mesh
   waitTime: number;         // Pause timer at target (0 = moving)
+  prevX: number;            // Previous X position (for collision revert)
+  prevZ: number;            // Previous Z position (for collision revert)
 }
 ```
 
@@ -160,9 +164,11 @@ export interface NPCData {
 | `originX`, `originZ` | `number` | Center point for wander calculations |
 | `radius` | `number` | Maximum distance from origin |
 | `targetX`, `targetZ` | `number` | Current destination coordinates |
-| `moveSpeed` | `number` | Movement speed in units/second |
 | `facingAngle` | `number` | Rotation angle (radians) for visual orientation |
 | `waitTime` | `number` | Countdown timer for pausing at destinations |
+| `prevX`, `prevZ` | `number` | Previous position for collision response |
+
+> **Note:** Movement speed is now defined in the `PathFollower` component, not `NPCData`. See [Pathfinding System](./pathfinding-system.md).
 
 ### Adding to ComponentTypeMap
 
@@ -257,11 +263,43 @@ import {
   SPAWNER_DATA,
   NPC_DATA,
   POSITION,
+  COLLIDER,
+  COLLISION_STATE,
+  PATH_FOLLOWER,
   type SpawnerData,
   type NPCData,
   type Position,
+  type Collider,
+  type CollisionState,
+  type PathFollower,
 } from "../ecs/components";
 import { NPC_GEOMETRY, NPC_MATERIAL } from "../structures/BlockTypes";
+import { pathfinder, Pathfinder } from "../core/Pathfinder";
+
+/**
+ * Find a walkable cell near the spawner.
+ */
+function findWalkableSpawnCell(
+  originX: number,
+  originZ: number,
+  radius: number
+): { x: number; z: number } | null {
+  const originCell = Pathfinder.worldToCell(originX, originZ);
+
+  for (let r = 1; r <= Math.ceil(radius); r++) {
+    for (let dx = -r; dx <= r; dx++) {
+      for (let dz = -r; dz <= r; dz++) {
+        if (Math.abs(dx) !== r && Math.abs(dz) !== r) continue;
+        const cellX = originCell.x + dx;
+        const cellZ = originCell.z + dz;
+        if (!pathfinder.isBlocked(cellX, cellZ)) {
+          return { x: cellX, z: cellZ };
+        }
+      }
+    }
+  }
+  return null;
+}
 
 export function createSpawnerSystem(
   scene: THREE.Scene
@@ -292,35 +330,65 @@ export function createSpawnerSystem(
       ) {
         spawner.timeSinceLastSpawn = 0;
 
-        // Pick random position within radius for initial target
-        const angle = Math.random() * Math.PI * 2;
-        const distance = Math.random() * spawner.radius;
-        const targetX = pos.x + Math.cos(angle) * distance;
-        const targetZ = pos.z + Math.sin(angle) * distance;
+        // Find walkable spawn cell near spawner
+        const spawnCell = findWalkableSpawnCell(pos.x, pos.z, spawner.radius);
+        if (!spawnCell) {
+          continue; // No walkable cell found
+        }
+
+        // Convert cell to world position (cell center)
+        const spawnWorld = Pathfinder.cellToWorld(spawnCell.x, spawnCell.z);
 
         // Create NPC entity
         const npcEntity = world.createEntity();
+
+        // Position at cell center
         world.addComponent<Position>(npcEntity, POSITION, {
-          x: pos.x,
+          x: spawnWorld.x,
           y: pos.y,
-          z: pos.z,
+          z: spawnWorld.z,
         });
+
+        // NPC behavior data
         world.addComponent<NPCData>(npcEntity, NPC_DATA, {
           spawnerEntityId: spawnerId,
           originX: pos.x,
           originZ: pos.z,
           radius: spawner.radius,
-          targetX,
-          targetZ,
-          moveSpeed: 2,
-          facingAngle: Math.atan2(targetX - pos.x, targetZ - pos.z),
-          waitTime: 0,
+          targetX: spawnWorld.x,
+          targetZ: spawnWorld.z,
+          facingAngle: 0,
+          waitTime: 0.5,  // Wait before first move
+          prevX: spawnWorld.x,
+          prevZ: spawnWorld.z,
         });
 
-        // Create and configure mesh
+        // PathFollower for grid-based movement
+        world.addComponent<PathFollower>(npcEntity, PATH_FOLLOWER, {
+          path: [],
+          pathIndex: -1,
+          targetX: spawnWorld.x,
+          targetZ: spawnWorld.z,
+          moveSpeed: 3,
+          needsPath: false,
+          pathRetryTime: 0,
+        });
+
+        // Collider for NPC-NPC collision detection
+        world.addComponent<Collider>(npcEntity, COLLIDER, {
+          type: "circle",
+          radius: 0.3,
+          layer: "npc",
+          collidesWith: new Set(["npc"]),
+        });
+        world.addComponent<CollisionState>(npcEntity, COLLISION_STATE, {
+          contacts: [],
+          isColliding: false,
+        });
+
+        // Create mesh at cell center
         const mesh = new THREE.Mesh(NPC_GEOMETRY, NPC_MATERIAL);
-        mesh.position.set(pos.x, pos.y + 0.4, pos.z);
-        mesh.rotation.y = Math.atan2(targetX - pos.x, targetZ - pos.z);
+        mesh.position.set(spawnWorld.x, pos.y + 0.4, spawnWorld.z);
         scene.add(mesh);
         world.setObject3D(npcEntity, mesh);
 
@@ -399,7 +467,9 @@ graph LR
 
 ## NPCMovementSystem
 
-The NPCMovementSystem handles NPC behavior: moving toward targets, pausing at destinations, and picking new targets.
+The NPCMovementSystem handles NPC **AI decision-making** — picking targets and requesting paths. Actual movement is handled by the PathfindingSystem.
+
+> **Note:** NPCs now use grid-based pathfinding to navigate around obstacles. See [Pathfinding System](./pathfinding-system.md) for the complete pathfinding documentation.
 
 ### Full Implementation
 
@@ -409,58 +479,93 @@ The NPCMovementSystem handles NPC behavior: moving toward targets, pausing at de
 import { World } from "../ecs/World";
 import {
   NPC_DATA,
+  PATH_FOLLOWER,
   POSITION,
   type NPCData,
+  type PathFollower,
   type Position,
 } from "../ecs/components";
+import { pathfinder, Pathfinder } from "../core/Pathfinder";
+
+const MAX_TARGET_ATTEMPTS = 20;
+
+/**
+ * Pick a random walkable cell within radius.
+ * Returns cell coordinates (integers).
+ */
+function pickWalkableTargetCell(
+  originX: number,
+  originZ: number,
+  radius: number
+): { x: number; z: number } | null {
+  const originCell = Pathfinder.worldToCell(originX, originZ);
+
+  for (let attempt = 0; attempt < MAX_TARGET_ATTEMPTS; attempt++) {
+    const angle = Math.random() * Math.PI * 2;
+    const dist = Math.random() * radius;
+    const cellX = originCell.x + Math.floor(Math.cos(angle) * dist);
+    const cellZ = originCell.z + Math.floor(Math.sin(angle) * dist);
+
+    if (!pathfinder.isBlocked(cellX, cellZ)) {
+      return { x: cellX, z: cellZ };
+    }
+  }
+  return null;
+}
 
 export function createNPCMovementSystem(): (world: World, dt: number) => void {
   return (world: World, dt: number) => {
-    const npcs = world.query(NPC_DATA, POSITION);
+    const npcs = world.query(NPC_DATA, PATH_FOLLOWER, POSITION);
 
     for (const npcId of npcs) {
       const npc = world.getComponent<NPCData>(npcId, NPC_DATA);
+      const pf = world.getComponent<PathFollower>(npcId, PATH_FOLLOWER);
       const pos = world.getComponent<Position>(npcId, POSITION);
-      if (!npc || !pos) continue;
+      if (!npc || !pf || !pos) continue;
 
-      // If waiting, decrement wait time and skip movement
+      // Store previous position for collision response
+      npc.prevX = pos.x;
+      npc.prevZ = pos.z;
+
+      // Handle wait time
       if (npc.waitTime > 0) {
         npc.waitTime -= dt;
         continue;
       }
 
-      // Calculate distance to target
-      const dx = npc.targetX - pos.x;
-      const dz = npc.targetZ - pos.z;
-      const distance = Math.sqrt(dx * dx + dz * dz);
+      // Check if NPC needs a new target
+      const noPath = pf.pathIndex === -1 && pf.path.length === 0;
+      const notRequesting = !pf.needsPath;
+      const notWaiting = pf.pathRetryTime <= 0;
 
-      // Check if at target
-      if (distance < 0.1) {
-        // Set random wait time (0.5 to 1.5 seconds)
-        npc.waitTime = 0.5 + Math.random();
+      if (noPath && notRequesting && notWaiting) {
+        // Pick new random walkable target
+        const targetCell = pickWalkableTargetCell(npc.originX, npc.originZ, npc.radius);
 
-        // Pick new random target within radius of origin
-        const angle = Math.random() * Math.PI * 2;
-        const targetDistance = Math.random() * npc.radius;
-        npc.targetX = npc.originX + Math.cos(angle) * targetDistance;
-        npc.targetZ = npc.originZ + Math.sin(angle) * targetDistance;
-        continue;
+        if (targetCell) {
+          const targetWorld = Pathfinder.cellToWorld(targetCell.x, targetCell.z);
+
+          npc.targetX = targetWorld.x;
+          npc.targetZ = targetWorld.z;
+
+          pf.targetX = targetWorld.x;
+          pf.targetZ = targetWorld.z;
+          pf.needsPath = true;  // Request path from PathfindingSystem
+        } else {
+          // No walkable target, wait and try again
+          npc.waitTime = 0.5;
+        }
       }
 
-      // Move toward target
-      const moveAmount = npc.moveSpeed * dt;
-      const ratio = Math.min(moveAmount / distance, 1);
-      pos.x += dx * ratio;
-      pos.z += dz * ratio;
-
-      // Update facing angle based on movement direction
-      npc.facingAngle = Math.atan2(dx, dz);
-
-      // Sync mesh position and rotation
-      const mesh = world.getObject3D(npcId);
-      if (mesh) {
-        mesh.position.set(pos.x, pos.y + 0.4, pos.z);
-        mesh.rotation.y = npc.facingAngle;
+      // Update facing based on movement
+      if (pf.pathIndex >= 0 && pf.pathIndex < pf.path.length) {
+        const waypoint = pf.path[pf.pathIndex];
+        const targetWorld = Pathfinder.cellToWorld(waypoint.x, waypoint.z);
+        const dx = targetWorld.x - pos.x;
+        const dz = targetWorld.z - pos.z;
+        if (Math.abs(dx) > 0.01 || Math.abs(dz) > 0.01) {
+          npc.facingAngle = Math.atan2(dx, dz);
+        }
       }
     }
   };
@@ -469,26 +574,29 @@ export function createNPCMovementSystem(): (world: World, dt: number) => void {
 
 ### NPC State Machine
 
-The NPC behavior is a simple state machine:
+The NPC behavior is a state machine coordinated between NPCMovementSystem (AI) and PathfindingSystem (movement):
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Moving: Spawned
-    Moving --> Waiting: Reached target
-    Waiting --> Moving: Wait timer expired
-    Moving --> Moving: Each frame (move toward target)
+    [*] --> Idle: Spawned
+    Idle --> PickingTarget: No path & not waiting
+    PickingTarget --> RequestingPath: Found walkable target
+    PickingTarget --> Waiting: No walkable cell found
+    RequestingPath --> Following: Path calculated
+    RequestingPath --> Waiting: No path exists
+    Following --> Idle: Path complete
+    Waiting --> Idle: Wait timer expired
 
-    note right of Moving
-        - Calculate direction to target
-        - Move at moveSpeed * dt
-        - Update facing angle
-        - Sync mesh transform
+    note right of PickingTarget
+        NPCMovementSystem:
+        - Pick random walkable cell
+        - Set pf.needsPath = true
     end note
 
-    note right of Waiting
-        - Decrement waitTime
-        - Skip movement
-        - When timer hits 0, pick new target
+    note right of Following
+        PathfindingSystem:
+        - Move along path waypoints
+        - Update mesh position
     end note
 ```
 
@@ -524,17 +632,119 @@ mesh.rotation.y = npc.facingAngle;
 
 `atan2(dx, dz)` gives the angle in radians from the +Z axis toward +X. Since our cone geometry points toward +Z after rotation, setting `rotation.y` makes it face the movement direction.
 
+---
+
+## Pathfinding Integration
+
+NPCs use the grid-based pathfinding system to navigate around obstacles. This section covers how the spawner and NPC systems integrate with pathfinding.
+
+### Components Required
+
+Each NPC needs both `NPCData` (AI behavior) and `PathFollower` (pathfinding):
+
+```typescript
+// NPCData - AI decision making
+world.addComponent<NPCData>(npcEntity, NPC_DATA, {
+  spawnerEntityId: spawnerId,
+  originX: pos.x,
+  originZ: pos.z,
+  radius: spawner.radius,
+  targetX: spawnWorld.x,
+  targetZ: spawnWorld.z,
+  facingAngle: 0,
+  waitTime: 0.5,
+  prevX: spawnWorld.x,   // For collision response
+  prevZ: spawnWorld.z,
+});
+
+// PathFollower - pathfinding and movement
+world.addComponent<PathFollower>(npcEntity, PATH_FOLLOWER, {
+  path: [],
+  pathIndex: -1,
+  targetX: spawnWorld.x,
+  targetZ: spawnWorld.z,
+  moveSpeed: 3,
+  needsPath: false,
+  pathRetryTime: 0,
+});
+```
+
+### System Coordination
+
 ```mermaid
-graph TB
-    subgraph "Angle Calculation"
-        DX[dx = target.x - pos.x]
-        DZ[dz = target.z - pos.z]
-        ATAN[atan2(dx, dz)]
-        ANGLE[facingAngle in radians]
+sequenceDiagram
+    participant NMS as NPCMovementSystem
+    participant PFS as PathfindingSystem
+    participant PF as Pathfinder
+
+    NMS->>NMS: NPC has no path, pick target
+    NMS->>PF: isBlocked(cellX, cellZ)?
+    PF-->>NMS: false (walkable)
+    NMS->>NMS: Set pf.targetX/Z, needsPath=true
+
+    Note over PFS: Next frame
+
+    PFS->>PF: findPath(current, target)
+    PF-->>PFS: PathPoint[] (A* result)
+    PFS->>PFS: pf.path = result, pathIndex = 0
+
+    loop Each frame
+        PFS->>PFS: Move toward path[pathIndex]
+        PFS->>PFS: pathIndex++ at waypoint
     end
-    DX --> ATAN
-    DZ --> ATAN
-    ATAN --> ANGLE
+
+    PFS->>PFS: Path complete, pathIndex = -1
+    Note over NMS: NPC picks new target
+```
+
+### Spawning at Walkable Cells
+
+The SpawnerSystem ensures NPCs spawn on walkable cells:
+
+```typescript
+function findWalkableSpawnCell(
+  originX: number,
+  originZ: number,
+  radius: number
+): { x: number; z: number } | null {
+  const originCell = Pathfinder.worldToCell(originX, originZ);
+
+  // Search outward from origin
+  for (let r = 1; r <= Math.ceil(radius); r++) {
+    for (let dx = -r; dx <= r; dx++) {
+      for (let dz = -r; dz <= r; dz++) {
+        if (Math.abs(dx) !== r && Math.abs(dz) !== r) continue;
+
+        const cellX = originCell.x + dx;
+        const cellZ = originCell.z + dz;
+
+        if (!pathfinder.isBlocked(cellX, cellZ)) {
+          return { x: cellX, z: cellZ };
+        }
+      }
+    }
+  }
+  return null;
+}
+```
+
+### Collision Response
+
+NPCs track their previous position for collision response:
+
+```typescript
+// In NPCMovementSystem - store position before PathfindingSystem moves
+npc.prevX = pos.x;
+npc.prevZ = pos.z;
+
+// In CollisionResponseSystem - revert on collision
+if (state.isColliding) {
+  pos.x = npc.prevX;
+  pos.z = npc.prevZ;
+  pf.path = [];        // Clear invalid path
+  pf.pathIndex = -1;
+  npc.waitTime = 0.3;  // Wait before picking new target
+}
 ```
 
 ---

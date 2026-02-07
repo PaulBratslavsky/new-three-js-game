@@ -53,6 +53,9 @@ export function createPlacementSystem(
 
     const hasHover = world.hasComponent(GAME_STATE_ENTITY, HOVER_TARGET);
 
+    // Only handle placement in build mode
+    if (gs.mode !== "build") return;
+
     // Place block on left click
     if (mouse.leftClicked && hasHover) {
       placeBlock(world, scene, gs);

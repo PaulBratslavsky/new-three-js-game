@@ -15,3 +15,4 @@ export type EntityId = number;
 export const CAMERA_ENTITY = 0;
 export const GAME_STATE_ENTITY = 1;
 export const HIGHLIGHT_ENTITY = 2;
+export const PLAYER_ENTITY = 3;

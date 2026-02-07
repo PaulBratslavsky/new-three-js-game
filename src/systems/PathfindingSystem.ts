@@ -2,8 +2,10 @@ import { World } from "../ecs/World";
 import {
   PATH_FOLLOWER,
   POSITION,
+  MOVEMENT_STATE,
   type PathFollower,
   type Position,
+  type MovementState,
 } from "../ecs/components";
 import { pathfinder, Pathfinder } from "../core/Pathfinder";
 
@@ -27,6 +29,13 @@ export function createPathfindingSystem(): (world: World, dt: number) => void {
       const pf = world.getComponent<PathFollower>(entityId, PATH_FOLLOWER);
       const pos = world.getComponent<Position>(entityId, POSITION);
       if (!pf || !pos) continue;
+
+      // Store previous position for collision revert (if entity has MovementState)
+      const movement = world.getComponent<MovementState>(entityId, MOVEMENT_STATE);
+      if (movement) {
+        movement.prevX = pos.x;
+        movement.prevZ = pos.z;
+      }
 
       // Get current cell
       const currentCell = Pathfinder.worldToCell(pos.x, pos.z);
