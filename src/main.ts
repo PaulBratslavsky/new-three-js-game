@@ -26,6 +26,7 @@ import { CoordinateDisplay } from "./ui/CoordinateDisplay";
 import { BlockSelector } from "./ui/BlockSelector";
 import { DebugToggle } from "./ui/DebugToggle";
 import { ModeToggle } from "./ui/ModeToggle";
+import { ZoomControl } from "./ui/ZoomControl";
 import { emitEvent, onEvent } from "./core/EventBus";
 import type { GameMode } from "./ecs/components";
 
@@ -45,6 +46,7 @@ import { createUISystem } from "./systems/UISystem";
 import { createDebugGridSystem } from "./systems/DebugGridSystem";
 import { createPlayerInputSystem } from "./systems/PlayerInputSystem";
 import { createSeekSystem } from "./systems/SeekSystem";
+import { NetworkManager } from "./network/NetworkManager";
 
 // --- SCENE SETUP ---
 const scene = new THREE.Scene();
@@ -83,6 +85,9 @@ world.addComponent<CameraState>(cameraEntity, CAMERA_STATE, {
   snapThreshold: 0.05,
   lastEmittedX: 5,
   lastEmittedZ: 5,
+  zoom: 10,
+  minZoom: 5,
+  maxZoom: 30,
 });
 world.setObject3D(cameraEntity, camera);
 
@@ -132,6 +137,13 @@ if (gameStateEntity !== GAME_STATE_ENTITY) throw new Error("GameState entity ID 
 if (highlightEntity !== HIGHLIGHT_ENTITY) throw new Error("Highlight entity ID mismatch");
 if (playerEntity !== PLAYER_ENTITY) throw new Error("Player entity ID mismatch");
 
+// --- NETWORK ---
+const networkManager = new NetworkManager(world, scene);
+world.setResource("networkManager", networkManager);
+
+// Auto-connect to server
+networkManager.connect();
+
 // --- INFRASTRUCTURE ---
 const chunkManager = new ChunkManager(scene, 2);
 
@@ -160,6 +172,7 @@ new CoordinateDisplay(); // NOSONAR - self-initializing UI component
 new BlockSelector(); // NOSONAR - self-initializing UI component
 new DebugToggle(); // NOSONAR - debug grid toggle
 new ModeToggle(); // NOSONAR - build/move mode toggle
+new ZoomControl(10, 5, 30); // NOSONAR - camera zoom control
 
 // --- MODE CHANGE LISTENER ---
 onEvent<{ mode: GameMode }>("mode:changed", ({ mode }) => {
@@ -175,6 +188,9 @@ const clock = new THREE.Clock();
 function animate() {
   requestAnimationFrame(animate);
   const dt = clock.getDelta();
+
+  // Update network (remote player interpolation)
+  networkManager.updateInterpolation(dt);
 
   for (const system of systems) {
     system(world, dt);

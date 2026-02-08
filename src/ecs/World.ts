@@ -11,6 +11,9 @@ export class World {
   // Side table for Three.js Object3D references
   private readonly object3Ds = new Map<EntityId, THREE.Object3D>();
 
+  // Resources: named singletons (like NetworkManager)
+  private readonly resources = new Map<string, unknown>();
+
   // --- Entity lifecycle ---
 
   createEntity(): EntityId {
@@ -91,5 +94,19 @@ export class World {
 
   removeObject3D(id: EntityId): void {
     this.object3Ds.delete(id);
+  }
+
+  // --- Resources (named singletons) ---
+
+  setResource<T>(name: string, value: T): void {
+    this.resources.set(name, value);
+  }
+
+  getResource<T>(name: string): T | undefined {
+    return this.resources.get(name) as T | undefined;
+  }
+
+  hasResource(name: string): boolean {
+    return this.resources.has(name);
   }
 }

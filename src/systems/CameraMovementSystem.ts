@@ -10,14 +10,27 @@ import {
   type CameraState,
   type InputState,
 } from "../ecs/components";
-import { emitEvent } from "../core/EventBus";
+import { emitEvent, onEvent } from "../core/EventBus";
 
 export function createCameraMovementSystem(): (world: World, dt: number) => void {
+  // Listen for zoom changes from UI
+  let pendingZoom: number | null = null;
+  onEvent<{ zoom: number }>("camera:zoom", ({ zoom }) => {
+    pendingZoom = zoom;
+  });
+
   return (world: World, dt: number) => {
     const pos = world.getComponent<Position>(CAMERA_ENTITY, POSITION);
     const cam = world.getComponent<CameraState>(CAMERA_ENTITY, CAMERA_STATE);
     const input = world.getComponent<InputState>(GAME_STATE_ENTITY, INPUT_STATE);
     if (!pos || !cam || !input) return;
+
+    // Apply pending zoom
+    if (pendingZoom !== null) {
+      cam.zoom = Math.max(cam.minZoom, Math.min(cam.maxZoom, pendingZoom));
+      pos.y = cam.zoom;
+      pendingZoom = null;
+    }
 
     const keys = input.keysPressed;
 

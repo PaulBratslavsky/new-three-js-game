@@ -8,4 +8,5 @@ export interface SpawnerData {
   spawnedNPCIds: Set<number>; // Track spawned NPC entity IDs
   spawnInterval: number;      // Seconds between spawns (default 2)
   timeSinceLastSpawn: number; // Accumulator for spawn timing
+  ownerId: string;            // Player ID who placed this spawner (for multiplayer)
 }

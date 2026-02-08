@@ -1,6 +1,8 @@
 # NPC Seek Behavior System
 
-A complete guide to the NPC pursuit mechanics including seeking, aggravation, and seek-and-destroy modes. This system creates dynamic enemy behavior where NPCs detect, chase, and become increasingly aggressive toward the player.
+A complete guide to the NPC pursuit mechanics including seeking, aggravation, and seek-and-destroy modes. This system creates dynamic enemy behavior where NPCs detect, chase, and become increasingly aggressive toward players.
+
+> **Multiplayer Note:** NPCs are friendly to their owner and only attack other players. See [Multiplayer System](./multiplayer-implementation-plan.md) for details.
 
 ---
 
@@ -14,8 +16,9 @@ A complete guide to the NPC pursuit mechanics including seeking, aggravation, an
 6. [Seek-and-Destroy Mode](#seek-and-destroy-mode)
 7. [Visual Feedback](#visual-feedback)
 8. [Integration with Other Systems](#integration-with-other-systems)
-9. [Configuration](#configuration)
-10. [State Machine Diagram](#state-machine-diagram)
+9. [Multiplayer Targeting](#multiplayer-targeting)
+10. [Configuration](#configuration)
+11. [State Machine Diagram](#state-machine-diagram)
 
 > **Related Documentation:** See [NPC Spawner System](./npc-spawner-system.md) for NPC creation and [Pathfinding System](./pathfinding-system.md) for movement mechanics.
 
@@ -227,6 +230,64 @@ Seeking/aggro NPCs don't clear their path on player collision:
 const isSeeking = seek?.state === "seeking" || seek?.state === "seek-and-destroy";
 if (playerContact && isSeeking) {
   // Just stop movement, don't clear path
+}
+```
+
+---
+
+## Multiplayer Targeting
+
+In multiplayer, NPCs use ownership to determine who to attack.
+
+### Ownership
+
+Every NPC has an `ownerId` field inherited from its spawner:
+
+```typescript
+interface NPCData {
+  spawnerEntityId: number;
+  facingAngle: number;
+  ownerId: string;  // Player ID who owns this NPC
+}
+```
+
+### Target Selection
+
+The SeekSystem finds the nearest **enemy** player:
+
+```typescript
+function findNearestEnemy(world, npcPos, npcOwnerId, detectionRadius) {
+  const players = world.query(PLAYER_IDENTITY, POSITION);
+
+  for (const playerEntityId of players) {
+    const identity = world.getComponent(playerEntityId, PLAYER_IDENTITY);
+
+    // Skip if this is the NPC's owner (friendly)
+    if (identity.playerId === npcOwnerId) continue;
+
+    // Check distance and track nearest enemy
+    // ...
+  }
+}
+```
+
+### Targeting Rules
+
+| NPC Owner | Target Player | Behavior |
+|-----------|---------------|----------|
+| Player A | Player A | **Ignore** (friendly) |
+| Player A | Player B | **Attack** (enemy) |
+| Player A | Player C | **Attack** (enemy) |
+
+### Single-Player Fallback
+
+When no `PlayerIdentity` components exist (single-player mode), the system falls back to targeting `PLAYER_ENTITY`:
+
+```typescript
+if (playersWithIdentity.length === 0) {
+  // Single-player mode - target PLAYER_ENTITY
+  const playerPos = world.getComponent(PLAYER_ENTITY, POSITION);
+  // ...
 }
 ```
 

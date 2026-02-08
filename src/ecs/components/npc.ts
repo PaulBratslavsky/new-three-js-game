@@ -13,4 +13,5 @@ export const NPC_DATA = "NPCData";
 export interface NPCData {
   spawnerEntityId: number;  // Parent spawner (for cleanup on spawner removal)
   facingAngle: number;      // Visual rotation (radians)
+  ownerId: string;          // Player ID who owns this NPC (inherited from spawner)
 }

@@ -6,20 +6,35 @@ import {
   POSITION,
   WANDER_BEHAVIOR,
   PLAYER_ENTITY,
+  NPC_DATA,
+  PLAYER_IDENTITY,
   type SeekBehavior,
   type PathFollower,
   type Position,
   type WanderBehavior,
+  type NPCData,
+  type PlayerIdentity,
 } from "../ecs/components";
 import { Pathfinder } from "../core/Pathfinder";
 import { NPC_MATERIAL, NPC_MATERIAL_SEEKING, NPC_MATERIAL_AGGRO } from "../structures/BlockTypes";
 
+// Extended seek behavior to track target entity
+interface SeekTarget {
+  entityId: number;
+  playerId: string;
+}
+
 /**
- * SeekSystem - Handles NPC pursuit of player.
+ * SeekSystem - Handles NPC pursuit of players.
+ *
+ * Multiplayer Support:
+ * - NPCs only target players who are NOT their owner
+ * - In single-player, targets the local player (PLAYER_ENTITY)
+ * - In multiplayer, finds nearest enemy player
  *
  * Flow:
- * 1. IDLE: Check if player within detection radius
- *    - If yes: transition to SEEKING, set target to player
+ * 1. IDLE: Check if any enemy player is within detection radius
+ *    - If yes: transition to SEEKING, set target to that player
  * 2. SEEKING: Chase player for N steps (cells traveled)
  *    - Update target to player's current position
  *    - Count each cell/waypoint reached
@@ -39,41 +54,117 @@ export function createSeekSystem(): (world: World, dt: number) => void {
   const lastPathIndex = new Map<number, number>();
   // Skip step counting after path recalculation
   const skipStepCount = new Set<number>();
+  // Track which player each NPC is targeting
+  const seekTargets = new Map<number, SeekTarget>();
+
+  /**
+   * Find the nearest enemy player for an NPC.
+   * Returns null if no enemy is in range or if in single-player with "local" owner.
+   */
+  function findNearestEnemy(
+    world: World,
+    npcPos: Position,
+    npcOwnerId: string,
+    detectionRadius: number
+  ): { target: SeekTarget; position: Position; distance: number } | null {
+    const npcCell = Pathfinder.worldToCell(npcPos.x, npcPos.z);
+    let nearest: { target: SeekTarget; position: Position; distance: number } | null = null;
+
+    // First, try to find players with PlayerIdentity (multiplayer)
+    const playersWithIdentity = world.query(PLAYER_IDENTITY, POSITION);
+
+    if (playersWithIdentity.length > 0) {
+      // Multiplayer mode - check all players
+      for (const playerEntityId of playersWithIdentity) {
+        const identity = world.getComponent<PlayerIdentity>(playerEntityId, PLAYER_IDENTITY);
+        const playerPos = world.getComponent<Position>(playerEntityId, POSITION);
+        if (!identity || !playerPos) continue;
+
+        // Skip if this is the NPC's owner (friendly)
+        if (identity.playerId === npcOwnerId) continue;
+
+        const playerCell = Pathfinder.worldToCell(playerPos.x, playerPos.z);
+        const dx = playerCell.x - npcCell.x;
+        const dz = playerCell.z - npcCell.z;
+        const dist = Math.sqrt(dx * dx + dz * dz);
+
+        if (dist <= detectionRadius) {
+          if (!nearest || dist < nearest.distance) {
+            nearest = {
+              target: { entityId: playerEntityId, playerId: identity.playerId },
+              position: playerPos,
+              distance: dist,
+            };
+          }
+        }
+      }
+    } else {
+      // Single-player mode - use PLAYER_ENTITY
+      // In single-player, ownerId is "local" and we always target the player
+      const playerPos = world.getComponent<Position>(PLAYER_ENTITY, POSITION);
+      if (playerPos) {
+        const playerCell = Pathfinder.worldToCell(playerPos.x, playerPos.z);
+        const dx = playerCell.x - npcCell.x;
+        const dz = playerCell.z - npcCell.z;
+        const dist = Math.sqrt(dx * dx + dz * dz);
+
+        if (dist <= detectionRadius) {
+          nearest = {
+            target: { entityId: PLAYER_ENTITY, playerId: "player" },
+            position: playerPos,
+            distance: dist,
+          };
+        }
+      }
+    }
+
+    return nearest;
+  }
+
+  /**
+   * Get a target player's position and PathFollower.
+   */
+  function getTargetInfo(
+    world: World,
+    target: SeekTarget
+  ): { position: Position; pathFollower: PathFollower | undefined } | null {
+    const position = world.getComponent<Position>(target.entityId, POSITION);
+    if (!position) return null;
+
+    const pathFollower = world.getComponent<PathFollower>(target.entityId, PATH_FOLLOWER);
+    return { position, pathFollower };
+  }
 
   return (world: World, dt: number) => {
-    // Get player position
-    const playerPos = world.getComponent<Position>(PLAYER_ENTITY, POSITION);
-    if (!playerPos) return;
-
-    const playerCell = Pathfinder.worldToCell(playerPos.x, playerPos.z);
-
-    // Query entities with seek behavior
-    const seekers = world.query(SEEK_BEHAVIOR, PATH_FOLLOWER, POSITION);
+    // Query NPCs with seek behavior
+    const seekers = world.query(SEEK_BEHAVIOR, PATH_FOLLOWER, POSITION, NPC_DATA);
 
     for (const entityId of seekers) {
       const seek = world.getComponent<SeekBehavior>(entityId, SEEK_BEHAVIOR);
       const pf = world.getComponent<PathFollower>(entityId, PATH_FOLLOWER);
       const pos = world.getComponent<Position>(entityId, POSITION);
-      if (!seek || !pf || !pos) continue;
+      const npcData = world.getComponent<NPCData>(entityId, NPC_DATA);
+      if (!seek || !pf || !pos || !npcData) continue;
 
       const npcCell = Pathfinder.worldToCell(pos.x, pos.z);
 
-      // Calculate distance to player (in cells)
-      const dx = playerCell.x - npcCell.x;
-      const dz = playerCell.z - npcCell.z;
-      const distToPlayer = Math.sqrt(dx * dx + dz * dz);
-
       switch (seek.state) {
-        case "idle":
-          // Check if player entered detection radius
-          if (distToPlayer <= seek.detectionRadius) {
+        case "idle": {
+          // Find nearest enemy player
+          const enemy = findNearestEnemy(world, pos, npcData.ownerId, seek.detectionRadius);
+
+          if (enemy) {
             // Start seeking!
             seek.state = "seeking";
             seek.stepsRemaining = seek.pursuitSteps;
-            seek.lastPlayerCellX = playerCell.x;
-            seek.lastPlayerCellZ = playerCell.z;
+            const targetCell = Pathfinder.worldToCell(enemy.position.x, enemy.position.z);
+            seek.lastPlayerCellX = targetCell.x;
+            seek.lastPlayerCellZ = targetCell.z;
 
-            // Turn NPC red when seeking (swap to shared seeking material)
+            // Track the target
+            seekTargets.set(entityId, enemy.target);
+
+            // Turn NPC red when seeking
             const mesh = world.getObject3D(entityId);
             if (mesh && mesh instanceof THREE.Mesh) {
               mesh.material = NPC_MATERIAL_SEEKING;
@@ -85,36 +176,58 @@ export function createSeekSystem(): (world: World, dt: number) => void {
             // Disable wandering while seeking
             const wander = world.getComponent<WanderBehavior>(entityId, WANDER_BEHAVIOR);
             if (wander) {
-              wander.waitTime = 999; // Effectively pause wandering
+              wander.waitTime = 999;
             }
 
-            // Set path target to player
-            const targetWorld = Pathfinder.cellToWorld(playerCell.x, playerCell.z);
+            // Set path target to enemy
+            const targetWorld = Pathfinder.cellToWorld(targetCell.x, targetCell.z);
             pf.targetX = targetWorld.x;
             pf.targetZ = targetWorld.z;
             pf.needsPath = true;
             pf.path = [];
             pf.pathIndex = -1;
-            // Skip first step count (path initialization shouldn't count)
             skipStepCount.add(entityId);
           }
           break;
+        }
 
-        case "seeking":
-          // Track waypoint progress to count steps (cells traveled)
+        case "seeking": {
+          const target = seekTargets.get(entityId);
+          const targetInfo = target ? getTargetInfo(world, target) : null;
+
+          // If target is gone, go back to idle
+          if (!targetInfo) {
+            seek.state = "idle";
+            seekTargets.delete(entityId);
+
+            const mesh = world.getObject3D(entityId);
+            if (mesh && mesh instanceof THREE.Mesh) {
+              mesh.material = NPC_MATERIAL;
+            }
+
+            pf.path = [];
+            pf.pathIndex = -1;
+            pf.needsPath = false;
+
+            const wander = world.getComponent<WanderBehavior>(entityId, WANDER_BEHAVIOR);
+            if (wander) {
+              wander.waitTime = 0.5;
+            }
+            break;
+          }
+
+          const targetCell = Pathfinder.worldToCell(targetInfo.position.x, targetInfo.position.z);
+
+          // Track waypoint progress to count steps
           const prevIndex = lastPathIndex.get(entityId) ?? -1;
           const currentIndex = pf.pathIndex;
 
-          // Skip step counting after path recalculation until we reach waypoint 2+
-          // (waypoint 0 is start, waypoint 1 is first step which shouldn't count after recalc)
           if (skipStepCount.has(entityId)) {
             if (currentIndex >= 2) {
-              // Path is stable, can start counting again
               skipStepCount.delete(entityId);
             }
             lastPathIndex.set(entityId, currentIndex);
           } else {
-            // Only count a step when pathIndex increases by exactly 1 and we're past waypoint 1
             if (currentIndex === prevIndex + 1 && currentIndex >= 2) {
               seek.stepsRemaining--;
             }
@@ -123,32 +236,27 @@ export function createSeekSystem(): (world: World, dt: number) => void {
 
           // Check if pursuit steps exhausted
           if (seek.stepsRemaining <= 0) {
-            // Increment aggravation
             seek.aggravationCount++;
             lastPathIndex.delete(entityId);
 
-            // Check if aggravation threshold reached
             if (seek.aggravationCount >= seek.aggravationThreshold) {
               // Enter SEEK-AND-DESTROY mode!
               seek.state = "seek-and-destroy";
               seek.seekAndDestroyRemaining = seek.seekAndDestroyDuration;
 
-              // Turn NPC blue (aggravated)
               const mesh = world.getObject3D(entityId);
               if (mesh && mesh instanceof THREE.Mesh) {
                 mesh.material = NPC_MATERIAL_AGGRO;
               }
 
-              // Target player's destination (where they're going)
-              const playerPf = world.getComponent<PathFollower>(PLAYER_ENTITY, PATH_FOLLOWER);
-              if (playerPf) {
-                pf.targetX = playerPf.targetX;
-                pf.targetZ = playerPf.targetZ;
+              // Target player's destination
+              if (targetInfo.pathFollower) {
+                pf.targetX = targetInfo.pathFollower.targetX;
+                pf.targetZ = targetInfo.pathFollower.targetZ;
               } else {
-                // Fallback to current position
-                const targetWorld = Pathfinder.cellToWorld(playerCell.x, playerCell.z);
-                pf.targetX = targetWorld.x;
-                pf.targetZ = targetWorld.z;
+                const tw = Pathfinder.cellToWorld(targetCell.x, targetCell.z);
+                pf.targetX = tw.x;
+                pf.targetZ = tw.z;
               }
               pf.needsPath = true;
               pf.path = [];
@@ -158,82 +266,105 @@ export function createSeekSystem(): (world: World, dt: number) => void {
               seek.state = "cooldown";
               seek.cooldownRemaining = seek.cooldownTime;
 
-              // Turn NPC back to green (swap to shared idle material)
               const mesh = world.getObject3D(entityId);
               if (mesh && mesh instanceof THREE.Mesh) {
                 mesh.material = NPC_MATERIAL;
               }
 
-              // Clear current path so NPC stops
               pf.path = [];
               pf.pathIndex = -1;
               pf.needsPath = false;
 
-              // Re-enable wandering
               const wander = world.getComponent<WanderBehavior>(entityId, WANDER_BEHAVIOR);
               if (wander) {
-                wander.waitTime = 0.5; // Small pause before wandering
+                wander.waitTime = 0.5;
               }
             }
             break;
           }
 
           // Update target to player's current position if they moved
-          if (playerCell.x !== seek.lastPlayerCellX || playerCell.z !== seek.lastPlayerCellZ) {
-            seek.lastPlayerCellX = playerCell.x;
-            seek.lastPlayerCellZ = playerCell.z;
+          if (targetCell.x !== seek.lastPlayerCellX || targetCell.z !== seek.lastPlayerCellZ) {
+            seek.lastPlayerCellX = targetCell.x;
+            seek.lastPlayerCellZ = targetCell.z;
 
-            // Re-target to new player position
-            const targetWorld = Pathfinder.cellToWorld(playerCell.x, playerCell.z);
-            pf.targetX = targetWorld.x;
-            pf.targetZ = targetWorld.z;
+            const tw = Pathfinder.cellToWorld(targetCell.x, targetCell.z);
+            pf.targetX = tw.x;
+            pf.targetZ = tw.z;
             pf.needsPath = true;
-            // Skip step counting next frame (path will recalculate, don't count 0→1 as a step)
             skipStepCount.add(entityId);
           }
 
-          // Request path if we have no active path and need to keep chasing
+          // Request path if needed
           if (pf.pathIndex === -1 && pf.path.length === 0 && !pf.needsPath) {
-            const targetWorld = Pathfinder.cellToWorld(playerCell.x, playerCell.z);
-            pf.targetX = targetWorld.x;
-            pf.targetZ = targetWorld.z;
+            const tw = Pathfinder.cellToWorld(targetCell.x, targetCell.z);
+            pf.targetX = tw.x;
+            pf.targetZ = tw.z;
             pf.needsPath = true;
           }
           break;
+        }
 
         case "cooldown":
-          // Decrement cooldown
           seek.cooldownRemaining -= dt;
 
           if (seek.cooldownRemaining <= 0) {
-            // Cooldown done, back to idle
             seek.state = "idle";
             seek.cooldownRemaining = 0;
-            // Aggravation persists - only resets if player stays far away
-            // (checked in idle state)
+            seekTargets.delete(entityId);
           }
           break;
 
-        case "seek-and-destroy":
-          // Time-based pursuit - chase player's destination
+        case "seek-and-destroy": {
           seek.seekAndDestroyRemaining -= dt;
 
-          // Check if player escaped (got far away) - only in seek-and-destroy
-          if (distToPlayer > seek.detectionRadius * 4) {
+          const target = seekTargets.get(entityId);
+          const targetInfo = target ? getTargetInfo(world, target) : null;
+
+          // If target is gone, exit seek-and-destroy
+          if (!targetInfo) {
             seek.state = "cooldown";
             seek.cooldownRemaining = seek.cooldownTime;
             seek.aggravationCount = 0;
+            seekTargets.delete(entityId);
 
-            // Turn NPC back to green
+            const mesh = world.getObject3D(entityId);
+            if (mesh && mesh instanceof THREE.Mesh) {
+              mesh.material = NPC_MATERIAL;
+            }
+
+            pf.path = [];
+            pf.pathIndex = -1;
+            pf.needsPath = false;
+
+            const wander = world.getComponent<WanderBehavior>(entityId, WANDER_BEHAVIOR);
+            if (wander) {
+              wander.waitTime = 0.5;
+            }
+            break;
+          }
+
+          const targetCell = Pathfinder.worldToCell(targetInfo.position.x, targetInfo.position.z);
+          const dx = targetCell.x - npcCell.x;
+          const dz = targetCell.z - npcCell.z;
+          const distToTarget = Math.sqrt(dx * dx + dz * dz);
+
+          // Check if player escaped
+          if (distToTarget > seek.detectionRadius * 4) {
+            seek.state = "cooldown";
+            seek.cooldownRemaining = seek.cooldownTime;
+            seek.aggravationCount = 0;
+            seekTargets.delete(entityId);
+
             const escapeMesh = world.getObject3D(entityId);
             if (escapeMesh && escapeMesh instanceof THREE.Mesh) {
               escapeMesh.material = NPC_MATERIAL;
             }
 
-            // Clear path and re-enable wandering
             pf.path = [];
             pf.pathIndex = -1;
             pf.needsPath = false;
+
             const escapeWander = world.getComponent<WanderBehavior>(entityId, WANDER_BEHAVIOR);
             if (escapeWander) {
               escapeWander.waitTime = 0.5;
@@ -241,13 +372,11 @@ export function createSeekSystem(): (world: World, dt: number) => void {
             break;
           }
 
-          // Get player's destination (where they clicked to move)
-          const playerPf = world.getComponent<PathFollower>(PLAYER_ENTITY, PATH_FOLLOWER);
-          if (playerPf) {
-            const destX = playerPf.targetX;
-            const destZ = playerPf.targetZ;
+          // Chase player's destination
+          if (targetInfo.pathFollower) {
+            const destX = targetInfo.pathFollower.targetX;
+            const destZ = targetInfo.pathFollower.targetZ;
 
-            // Update target if player's destination changed
             if (pf.targetX !== destX || pf.targetZ !== destZ) {
               pf.targetX = destX;
               pf.targetZ = destZ;
@@ -262,29 +391,27 @@ export function createSeekSystem(): (world: World, dt: number) => void {
 
           // Check if duration expired
           if (seek.seekAndDestroyRemaining <= 0) {
-            // Done with seek-and-destroy, enter cooldown
             seek.state = "cooldown";
             seek.cooldownRemaining = seek.cooldownTime;
-            seek.aggravationCount = 0; // Reset aggravation after seek-and-destroy
+            seek.aggravationCount = 0;
+            seekTargets.delete(entityId);
 
-            // Turn NPC back to green
             const mesh = world.getObject3D(entityId);
             if (mesh && mesh instanceof THREE.Mesh) {
               mesh.material = NPC_MATERIAL;
             }
 
-            // Clear path
             pf.path = [];
             pf.pathIndex = -1;
             pf.needsPath = false;
 
-            // Re-enable wandering
             const wander = world.getComponent<WanderBehavior>(entityId, WANDER_BEHAVIOR);
             if (wander) {
               wander.waitTime = 0.5;
             }
           }
           break;
+        }
       }
     }
   };

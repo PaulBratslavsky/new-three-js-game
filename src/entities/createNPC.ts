@@ -47,6 +47,7 @@ export interface NPCOptions {
   originX: number;
   originZ: number;
   wanderRadius: number;
+  ownerId: string;  // Player ID who owns this NPC
 }
 
 /**
@@ -69,6 +70,7 @@ export function createNPC(
   world.addComponent<NPCData>(entity, NPC_DATA, {
     spawnerEntityId: options.spawnerEntityId,
     facingAngle: 0,
+    ownerId: options.ownerId,
   });
 
   // Wander behavior

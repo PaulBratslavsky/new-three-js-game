@@ -10,4 +10,7 @@ export interface CameraState {
   snapThreshold: number;
   lastEmittedX: number;
   lastEmittedZ: number;
+  zoom: number;        // Camera height/zoom level
+  minZoom: number;     // Minimum zoom (closest)
+  maxZoom: number;     // Maximum zoom (furthest)
 }
